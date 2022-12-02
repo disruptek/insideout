@@ -10,4 +10,4 @@ task test, "run tests for ci":
   when defined(windows):
     exec "balls.cmd --gc:arc --gc:orc"
   else:
-    exec findExe"balls --gc:arc --gc:orc"
+    exec "balls --gc:arc --gc:orc"
