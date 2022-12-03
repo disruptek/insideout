@@ -2,8 +2,8 @@ import pkg/balls
 
 import insideout/semaphores
 
-suite "semaphores":
-  test "stupid things":
+proc main =
+  suite "semaphores":
     var s: Semaphore
     initSemaphore(s, 2)
     check s.available == 2
@@ -22,3 +22,6 @@ suite "semaphores":
     inc s
     withSemaphore s:
       discard
+
+when isMainModule:
+  main()
