@@ -27,7 +27,9 @@ proc `=destroy`*[A, B](runtime: var Runtime[A, B]) =
 proc dispatcher*[A, B](work: Work[A, B]) {.thread.} =
   ## thread-local continuation dispatch
   {.cast(gcsafe).}:
-    discard trampoline work.factory.call(work.mailbox)
+    if work.mailbox.isInitialized:
+      if not work.factory.fn.isNil:
+        discard trampoline work.factory.call(work.mailbox)
 
 proc hatch*[A, B](runtime: var Runtime[A, B]; mailbox: Mailbox[B]) =
   ## add compute to mailbox
@@ -43,6 +45,11 @@ proc hatch*[A, B](runtime: var Runtime[A, B]; factory: Factory[A, B]): Mailbox[B
   ## create compute from a factory
   runtime.thread.data.factory = factory
   result = hatch(runtime)
+
+proc hatch*[A, B](runtime: var Runtime[A, B]; factory: Factory[A, B]; mailbox: Mailbox[B]) =
+  ## create compute from a factory and mailbox
+  runtime.thread.data.factory = factory
+  hatch(runtime, mailbox)
 
 proc hatch*[A, B](factory: Factory[A, B]): Runtime[A, B] =
   ## create compute from a factory
