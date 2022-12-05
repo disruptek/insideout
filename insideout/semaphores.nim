@@ -35,28 +35,29 @@ proc release*(s: var Semaphore) =
   ## adhoc release of semaphore's lock
   release s.lock
 
+template withLock*(s: var Semaphore; logic: untyped) =
+  acquire s
+  try:
+    logic
+  finally:
+    release s
+
 proc signal*(s: var Semaphore) =
   ## blocking signal of `s`; increments semaphore
   withLock s.lock:
     inc s.count
-    signal s.cond
+  signal s.cond
 
 proc wait*(s: var Semaphore) =
   ## blocking wait on `s`
-  template consume(s: Semaphore) =
-    try:
-      if s.count > 0:
-        dec s.count
-        break
-    finally:
-      release s.lock
-
   while true:
     acquire s.lock
-    consume s
-    # unavailable; wait and retry
+    if s.count > 0:
+      dec s.count
+      release s.lock
+      break
     wait(s.cond, s.lock)
-    consume s
+    release s.lock
 
 proc available*(s: var Semaphore): int =
   ## blocking count of `s`
@@ -77,22 +78,26 @@ proc dec*(s: var Semaphore) =
   withLock s.lock:
     dec s.count
 
-macro withSemaphore*(s: var Semaphore; logic: typed): untyped =
-  ## blocking wait on `s`; run `logic` before release
-  let consume =
-    genAstOpt({}, s, logic):
-      try:
-        if s.count > 0:
+macro withLockedSemaphore*(s: var Semaphore; logic: typed): untyped =
+  ## block until `s` is available
+  ## consume it
+  ## run `logic` while holding the lock
+  genAstOpt({}, s, logic):
+    while true:
+      acquire s.lock
+      if s.count > 0:
+        try:
           dec s.count
           logic
           break
-      finally:
-        release s.lock
-  result =
-    genAstOpt({}, s, consume):
-      while true:
-        acquire s.lock
-        consume
-        # unavailable; wait and retry
-        wait(s.cond, s.lock)
-        consume
+        finally:
+          release s.lock
+      wait(s.cond, s.lock)
+      release s.lock
+
+template withSemaphore*(s: var Semaphore; logic: typed): untyped =
+  wait s
+  try:
+    logic
+  finally:
+    signal s

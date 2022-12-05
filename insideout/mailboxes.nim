@@ -1,6 +1,7 @@
 import std/atomics
 import std/deques
 import std/hashes
+import std/locks
 import std/strutils
 
 import pkg/nimactors/isisolated
@@ -10,6 +11,7 @@ import insideout/semaphores
 type
   MailboxObj[T] = object
     deck: Deque[T]
+    lock: Lock
     write: Semaphore
     read: Semaphore
     rc: Atomic[int]
@@ -17,7 +19,7 @@ type
   Mailbox*[T] = object
     box: ptr MailboxObj[T]
 
-proc isInitialized*[T](mail: Mailbox[T]): bool {.inline.} =
+proc isInitialized*(mail: Mailbox): bool {.inline.} =
   not mail.box.isNil
 
 proc hash*(mail: var Mailbox): Hash =
@@ -37,7 +39,7 @@ proc `$`*(mail: Mailbox): string =
     else:
       "nil>"
 
-template assertInitialized*[T](mail: Mailbox[T]): untyped =
+proc assertInitialized*(mail: Mailbox) =
   if unlikely (not mail.isInitialized):
     raise ValueError.newException "mailbox uninitialized"
 
@@ -46,6 +48,11 @@ proc owners*[T](mail: Mailbox[T]): int =
   ## initialized mailboxen and zero for all others
   if mail.isInitialized:
     result = load(mail.box.rc, moAcquire) + 1
+
+proc `=destroy`*[T](box: var MailboxObj[T]) =
+  deinitLock box.lock
+  `=destroy`(box.write)
+  `=destroy`(box.read)
 
 proc `=destroy`*[T](mail: var Mailbox[T]) =
   # permit destroy of unassigned mailboxen
@@ -62,7 +69,7 @@ proc `=destroy`*[T](mail: var Mailbox[T]) =
 proc `=copy`*[T](dest: var Mailbox[T]; src: Mailbox[T]) =
   # permit copy of unassigned mailboxen
   if src.isInitialized:
-    when true:
+    when false:
       src.box.rc += 1
     else:
       let was = fetchAdd(src.box.rc, 1)
@@ -80,20 +87,23 @@ proc forget*(mail: Mailbox) {.deprecated: "debugging tool".} =
 proc newMailbox*[T](initialSize: int = defaultInitialSize): Mailbox[T] =
   result.box = cast[ptr MailboxObj[T]](allocShared0(sizeof MailboxObj[T]))
   result.box.deck = initDeque[T](initialSize)
+  initLock result.box.lock
   initSemaphore(result.box.write, initialSize)
   initSemaphore(result.box.read, 0)
-  #echo "init " & $result & " in " & $getThreadId()
+  echo "init " & $result & ", size " & $initialSize & " in " & $getThreadId()
 
 proc recv*[T](mail: Mailbox[T]): T =
   assertInitialized mail
-  withSemaphore mail.box.read:
+  wait mail.box.read
+  withLock mail.box.lock:
     result = popFirst mail.box.deck
   signal mail.box.write
 
 proc send*[T](mail: Mailbox[T]; message: sink T) =
   assertInitialized mail
-  assertIsolated message
-  withSemaphore mail.box.write:
+  #assertIsolated message
+  wait mail.box.write
+  withLock mail.box.lock:
     mail.box.deck.addLast message
     when T is ref:
       wasMoved message
