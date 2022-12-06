@@ -60,16 +60,17 @@ proc `=destroy`*[T](mail: var Mailbox[T]) =
     let prior = fetchSub(mail.box.rc, 1, moAcquire)
     if prior == 0:
       deallocShared mail.box
-      echo "destroy freed " & $mail & " in thread " & $getThreadId()
+      when not defined(release):
+        echo "destroy freed " & $mail & " in thread " & $getThreadId()
     else:
-      echo "destroy " & $mail & "; counter now " & $(prior - 1) & " in thread " & $getThreadId()
-      discard
+      when not defined(release):
+        echo "destroy " & $mail & "; counter now " & $(prior - 1) & " in thread " & $getThreadId()
     mail.box = nil
 
 proc `=copy`*[T](dest: var Mailbox[T]; src: Mailbox[T]) =
   # permit copy of unassigned mailboxen
   if src.isInitialized:
-    when false:
+    when defined(release):
       src.box.rc += 1
     else:
       let was = fetchAdd(src.box.rc, 1)
@@ -81,8 +82,11 @@ proc `=copy`*[T](dest: var Mailbox[T]; src: Mailbox[T]) =
 proc forget*(mail: Mailbox) {.deprecated: "debugging tool".} =
   ## cheat mode
   if mail.isInitialized:
-    let was = fetchSub(mail.box.rc, 1)
-    echo "forget " & $mail & "; counter now " & $(was - 1) & " in " & $getThreadId()
+    when defined(release):
+      mail.box.rc -= 1
+    else:
+      let was = fetchSub(mail.box.rc, 1)
+      echo "forget " & $mail & "; counter now " & $(was - 1) & " in " & $getThreadId()
 
 proc newMailbox*[T](initialSize: int = defaultInitialSize): Mailbox[T] =
   result.box = cast[ptr MailboxObj[T]](allocShared0(sizeof MailboxObj[T]))
@@ -90,7 +94,8 @@ proc newMailbox*[T](initialSize: int = defaultInitialSize): Mailbox[T] =
   initLock result.box.lock
   initSemaphore(result.box.write, initialSize)
   initSemaphore(result.box.read, 0)
-  echo "init " & $result & ", size " & $initialSize & " in " & $getThreadId()
+  when not defined(release):
+    echo "init " & $result & ", size " & $initialSize & " in " & $getThreadId()
 
 proc recv*[T](mail: Mailbox[T]): T =
   assertInitialized mail
