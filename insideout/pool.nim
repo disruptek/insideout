@@ -12,9 +12,13 @@ proc initPool*(pool: var Pool) =
   discard
 
 proc drain*(pool: var Pool) =
+  # initiate quits for all the runtimes
+  for item in pool.mitems:
+    quit item
+
+  # remove runtimes as they terminate
   while not pool.head.isNil:
     let head = pool.head
-    quit pool.head.value
     wait pool.head.value
     pool.remove head
 
