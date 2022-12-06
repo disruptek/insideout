@@ -21,16 +21,16 @@ proc `=copy`*[A, B](runtime: var Runtime[A, B]; other: Runtime[A, B]) {.error.} 
 template ran*[A, B](runtime: Runtime[A, B]): bool =
   runtime.mailbox.isInitialized
 
-proc wait*(runtime: var Runtime) {.inline.} =
+proc join*(runtime: var Runtime) {.inline.} =
   if runtime.ran:
     joinThread runtime.thread
+    reset runtime.mailbox
 
 proc `=destroy`*[A, B](runtime: var Runtime[A, B]) =
   ## ensure the runtime has stopped before it is destroyed
-  wait runtime
+  join runtime
   `=destroy`(runtime.thread)
   reset runtime.thread.data.mailbox
-  reset runtime.mailbox
 
 proc dispatcher*[A, B](work: Work[A, B]) {.thread.} =
   ## thread-local continuation dispatch

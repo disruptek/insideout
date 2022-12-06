@@ -20,7 +20,7 @@ proc drain*(pool: var Pool) =
   # remove runtimes as they terminate
   while not pool.head.isNil:
     let head = pool.head
-    wait pool.head.value
+    join pool.head.value
     pool.remove head
 
 proc fill*[A, B](pool: var Pool[A, B]): var Runtime[A, B] =
