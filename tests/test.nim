@@ -26,13 +26,14 @@ proc ask(mailbox: Mailbox[Query]; x: int): int {.cps: Query.} =
   #echo "recovering in " & $getThreadId()
   result = value()
 
-proc rz(a: Oracle; b: Query) {.cps: Continuation.} =
+proc rz(a: Oracle; b: Query): Oracle {.cpsMagic.} =
   ## fraternization
   if a.x >= int.high div 2:
     a.x = 1
   else:
     a.x *= 2
   b.y += a.x
+  result = a
 
 proc setupOracle(o: Oracle): Oracle {.cpsMagic.} =
   o.x = 1
@@ -46,7 +47,7 @@ proc oracle(mailbox: Mailbox[Query]) {.cps: Oracle.} =
     if dismissed query:
       break
     else:
-      rz(me(), query)
+      rz query
       tempoline query
 
 # define a service using a continuation bootstrap
