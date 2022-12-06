@@ -8,6 +8,6 @@ requires "https://github.com/zevv/nimactors >= 0.0.1 & < 1.0.0"
 
 task test, "run tests for ci":
   when defined(windows):
-    exec "balls.cmd --gc:arc --gc:orc"
+    exec "balls.cmd --threads:on --gc:arc --gc:orc"
   else:
-    exec "balls --gc:arc --gc:orc"
+    exec "balls --threads:on --gc:arc --gc:orc"
