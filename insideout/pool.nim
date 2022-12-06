@@ -28,7 +28,7 @@ proc fill*[A, B](pool: var Pool[A, B]): var Runtime[A, B] =
   pool.prepend node
   result = node.value
 
-proc len*(pool: Pool): int =
+proc count*(pool: Pool): int =
   var head = pool.head
   while not head.isNil:
     inc result

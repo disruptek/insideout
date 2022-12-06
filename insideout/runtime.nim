@@ -1,3 +1,5 @@
+import system/ansi_c
+
 import pkg/cps
 
 import insideout/mailboxes
@@ -28,10 +30,10 @@ proc `=destroy`*[A, B](runtime: var Runtime[A, B]) =
 
 proc dispatcher*[A, B](work: Work[A, B]) {.thread.} =
   ## thread-local continuation dispatch
-  {.cast(gcsafe).}:
-    if not work.mailbox.isNil:
+  if not work.mailbox.isNil:
+    if not work.factory.fn.isNil:
       if work.mailbox[].isInitialized:
-        if not work.factory.fn.isNil:
+        {.cast(gcsafe).}:
           discard trampoline work.factory.call(work.mailbox[])
 
 proc hatch*[A, B](runtime: var Runtime[A, B]; mailbox: Mailbox[B]) =
