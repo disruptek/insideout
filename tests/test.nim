@@ -28,7 +28,10 @@ proc ask(mailbox: Mailbox[Query]; x: int): int {.cps: Query.} =
 
 proc rz(a: Oracle; b: Query) {.cps: Continuation.} =
   ## fraternization
-  a.x *= 2
+  if a.x >= int.high div 2:
+    a.x = 1
+  else:
+    a.x *= 2
   b.y += a.x
 
 proc setupOracle(o: Oracle): Oracle {.cpsMagic.} =
