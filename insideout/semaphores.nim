@@ -46,7 +46,7 @@ proc signal*(s: var Semaphore) =
   ## blocking signal of `s`; increments semaphore
   withLock s.lock:
     inc s.count
-  signal s.cond
+    signal s.cond
 
 proc wait*(s: var Semaphore) =
   ## blocking wait on `s`
