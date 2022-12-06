@@ -14,6 +14,7 @@ proc pthread_signal(thread: SysThread; signal: cint)
   {.importc: "pthread_kill", header: pthreadh.}
 
 proc goto*[T](c: sink T; where: Mailbox[T]): T {.cpsMagic.} =
+  ## move the current continuation to another compute domain
   where.send c
 
 template tempoline*(supplied: typed): untyped =

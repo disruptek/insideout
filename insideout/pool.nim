@@ -6,12 +6,10 @@ import insideout/runtime
 
 type
   PoolNode[A, B] = SinglyLinkedNode[Runtime[A, B]]
-  Pool*[A, B] = SinglyLinkedList[Runtime[A, B]]
-
-proc initPool*(pool: var Pool) =
-  discard
+  Pool*[A, B] = SinglyLinkedList[Runtime[A, B]]  ## a collection of runtimes
 
 proc drain*(pool: var Pool) =
+  ## shut down all runtimes in the pool
   # initiate quits for all the runtimes
   for item in pool.mitems:
     if item.ran:
@@ -24,12 +22,14 @@ proc drain*(pool: var Pool) =
     pool.remove head
 
 proc fill*[A, B](pool: var Pool[A, B]): var Runtime[A, B] =
+  ## add a runtime to the pool
   var node: SinglyLinkedNode[Runtime[A, B]]
   new node
   pool.prepend node
   result = node.value
 
 proc count*(pool: Pool): int =
+  ## count the number of runtimes in the pool
   var head = pool.head
   while not head.isNil:
     inc result

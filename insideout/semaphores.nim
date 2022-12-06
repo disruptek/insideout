@@ -36,6 +36,7 @@ proc release*(s: var Semaphore) =
   release s.lock
 
 template withLock*(s: var Semaphore; logic: untyped) =
+  ## run the `logic` while holding the semaphore `s`'s lock
   acquire s
   try:
     logic
@@ -79,8 +80,8 @@ proc dec*(s: var Semaphore) =
     dec s.count
 
 macro withLockedSemaphore*(s: var Semaphore; logic: typed): untyped =
-  ## block until `s` is available
-  ## consume it
+  ## block until `s` is available,
+  ## consume it, and
   ## run `logic` while holding the lock
   genAstOpt({}, s, logic):
     while true:
@@ -96,6 +97,7 @@ macro withLockedSemaphore*(s: var Semaphore; logic: typed): untyped =
       release s.lock
 
 template withSemaphore*(s: var Semaphore; logic: typed): untyped =
+  ## wait for the semaphore `s`, run the `logic`, and signal it
   wait s
   try:
     logic

@@ -16,10 +16,11 @@ type
     read: Semaphore
     rc: Atomic[int]
 
-  Mailbox*[T] = object
+  Mailbox*[T] = object  ## a queue for `T` values
     box: ptr MailboxObj[T]
 
 proc isInitialized*(mail: Mailbox): bool {.inline.} =
+  ## true if the mailbox has been initialized
   not mail.box.isNil
 
 proc hash*(mail: var Mailbox): Hash =
@@ -27,9 +28,11 @@ proc hash*(mail: var Mailbox): Hash =
   hash(cast[int](mail.box))
 
 const
-  MissingMailbox* = default(Mailbox[void])
+  MissingMailbox* = default(Mailbox[void])  ##
+  ## a mailbox equal to all other uninitialized mailboxes
 
 proc `==`*[A, B](a: Mailbox[A]; b: Mailbox[B]): bool =
+  ## two mailboxes are identical if they have the same hash
   hash(a) == hash(b)
 
 proc `$`*(mail: Mailbox): string =
@@ -40,6 +43,7 @@ proc `$`*(mail: Mailbox): string =
       "nil>"
 
 proc assertInitialized*(mail: Mailbox) =
+  ## raise a ValueError if the mailbox is not initialized
   if unlikely (not mail.isInitialized):
     raise ValueError.newException "mailbox uninitialized"
 
@@ -89,6 +93,7 @@ proc forget*(mail: Mailbox) {.deprecated: "debugging tool".} =
       echo "forget " & $mail & "; counter now " & $(was - 1) & " in " & $getThreadId()
 
 proc newMailbox*[T](initialSize: int = defaultInitialSize): Mailbox[T] =
+  ## create a new mailbox which can hold `initialSize` items
   result.box = cast[ptr MailboxObj[T]](allocShared0(sizeof MailboxObj[T]))
   result.box.deck = initDeque[T](initialSize)
   initLock result.box.lock
@@ -98,6 +103,7 @@ proc newMailbox*[T](initialSize: int = defaultInitialSize): Mailbox[T] =
     echo "init " & $result & ", size " & $initialSize & " in " & $getThreadId()
 
 proc recv*[T](mail: Mailbox[T]): T =
+  ## pop an item from the mailbox
   assertInitialized mail
   wait mail.box.read
   withLock mail.box.lock:
@@ -105,6 +111,7 @@ proc recv*[T](mail: Mailbox[T]): T =
   signal mail.box.write
 
 proc send*[T](mail: Mailbox[T]; message: sink T) =
+  ## push an item into the mailbox
   assertInitialized mail
   #assertIsolated message
   wait mail.box.write
@@ -113,12 +120,3 @@ proc send*[T](mail: Mailbox[T]; message: sink T) =
     when T is ref:
       wasMoved message
   signal mail.box.read
-
-proc resizeBy[T](mail: Mailbox[T]; amount: int) {.used.} =
-  ## adjust mailbox size for future submissions
-  assertInitialized mail
-  for n in 0..abs(amount):
-    if amount < 0:
-      dec mail.box.write
-    else:
-      signal mail.box.write
