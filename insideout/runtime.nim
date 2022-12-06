@@ -18,15 +18,19 @@ type
 proc `=copy`*[A, B](runtime: var Runtime[A, B]; other: Runtime[A, B]) {.error.} =
   discard
 
+template ran*[A, B](runtime: Runtime[A, B]): bool =
+  runtime.mailbox.isInitialized
+
 proc wait*(runtime: var Runtime) {.inline.} =
-  if runtime.thread.running:
+  if runtime.ran:
     joinThread runtime.thread
 
 proc `=destroy`*[A, B](runtime: var Runtime[A, B]) =
   ## ensure the runtime has stopped before it is destroyed
   wait runtime
   `=destroy`(runtime.thread)
-  runtime.mailbox = default Mailbox[B]
+  reset runtime.thread.data.mailbox
+  reset runtime.mailbox
 
 proc dispatcher*[A, B](work: Work[A, B]) {.thread.} =
   ## thread-local continuation dispatch

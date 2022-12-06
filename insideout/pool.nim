@@ -14,7 +14,8 @@ proc initPool*(pool: var Pool) =
 proc drain*(pool: var Pool) =
   # initiate quits for all the runtimes
   for item in pool.mitems:
-    quit item
+    if item.ran:
+      quit item
 
   # remove runtimes as they terminate
   while not pool.head.isNil:
