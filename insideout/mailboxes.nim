@@ -4,8 +4,6 @@ import std/hashes
 import std/locks
 import std/strutils
 
-import pkg/nimactors/isisolated
-
 import insideout/semaphores
 
 type
@@ -113,7 +111,6 @@ proc recv*[T](mail: Mailbox[T]): T =
 proc send*[T](mail: Mailbox[T]; message: sink T) =
   ## push an item into the mailbox
   assertInitialized mail
-  #assertIsolated message
   wait mail.box.write
   withLock mail.box.lock:
     mail.box.deck.addLast message
