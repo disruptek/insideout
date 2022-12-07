@@ -1,5 +1,3 @@
-import system/ansi_c
-
 import pkg/cps
 
 import insideout/mailboxes
