@@ -72,7 +72,7 @@ jobs:
         run: |
           cd project
           nimble --accept develop
-          nimble test
+          balls --panics:on --backend:c --mm:arc --mm:orc
 
       - name: Build docs
         shell: bash
