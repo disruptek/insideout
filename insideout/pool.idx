@@ -1,0 +1,4 @@
+Pool	insideout/pool.html#Pool	pool: Pool	
+drain	insideout/pool.html#drain,Pool	pool: drain(pool: var Pool)	
+fill	insideout/pool.html#fill,Pool[A,B]	pool: fill[A, B](pool: var Pool[A, B]): var Runtime[A, B]	
+count	insideout/pool.html#count,Pool	pool: count(pool: Pool): int	

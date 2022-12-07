@@ -1,0 +1,3 @@
+goto	insideout.html#goto,sinkT,Mailbox[T]	insideout: goto[T](c: sink T; where: Mailbox[T]): T	
+goto	insideout.html#goto,Mailbox[T]	insideout: goto[T](where: Mailbox[T])	
+tempoline	insideout.html#tempoline.t,typed	insideout: tempoline(supplied: typed): untyped	

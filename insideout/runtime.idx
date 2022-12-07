@@ -1,0 +1,12 @@
+Runtime	insideout/runtime.html#Runtime	runtime: Runtime	
+`=copy`	insideout/runtime.html#=copy,Runtime[A,B],Runtime[A,B]	runtime: `=copy`[A, B](runtime: var Runtime[A, B]; other: Runtime[A, B])	
+ran	insideout/runtime.html#ran.t,Runtime[A,B]	runtime: ran[A, B](runtime: Runtime[A, B]): bool	
+join	insideout/runtime.html#join,Runtime	runtime: join(runtime: var Runtime)	
+`=destroy`	insideout/runtime.html#=destroy,Runtime[A,B]	runtime: `=destroy`[A, B](runtime: var Runtime[A, B])	
+spawn	insideout/runtime.html#spawn,Runtime[A,B],Mailbox[B]	runtime: spawn[A, B](runtime: var Runtime[A, B]; mailbox: Mailbox[B])	
+spawn	insideout/runtime.html#spawn,Runtime[A,B]	runtime: spawn[A, B](runtime: var Runtime[A, B]): Mailbox[B]	
+spawn	insideout/runtime.html#spawn,Runtime[A,B],Factory[A,B]	runtime: spawn[A, B](runtime: var Runtime[A, B]; factory: Factory[A, B]): Mailbox[B]	
+spawn	insideout/runtime.html#spawn,Runtime[A,B],Factory[A,B],Mailbox[B]	runtime: spawn[A, B](runtime: var Runtime[A, B]; factory: Factory[A, B];\n            mailbox: Mailbox[B])	
+spawn	insideout/runtime.html#spawn,Factory[A,B]	runtime: spawn[A, B](factory: Factory[A, B]): Runtime[A, B]	
+quit	insideout/runtime.html#quit,Runtime[A,B]	runtime: quit[A, B](runtime: var Runtime[A, B])	
+running	insideout/runtime.html#running,Runtime	runtime: running(runtime: var Runtime): bool	

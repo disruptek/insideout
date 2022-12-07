@@ -1,0 +1,15 @@
+Mailbox	insideout/mailboxes.html#Mailbox	mailboxes: Mailbox	
+isInitialized	insideout/mailboxes.html#isInitialized,Mailbox	mailboxes: isInitialized(mail: Mailbox): bool	
+hash	insideout/mailboxes.html#hash,Mailbox	mailboxes: hash(mail: var Mailbox): Hash	
+MissingMailbox	insideout/mailboxes.html#MissingMailbox	mailboxes: MissingMailbox	
+`==`	insideout/mailboxes.html#==,Mailbox[A],Mailbox[B]	mailboxes: `==`[A, B](a: Mailbox[A]; b: Mailbox[B]): bool	
+`$`	insideout/mailboxes.html#$,Mailbox	mailboxes: `$`(mail: Mailbox): string	
+assertInitialized	insideout/mailboxes.html#assertInitialized,Mailbox	mailboxes: assertInitialized(mail: Mailbox)	
+owners	insideout/mailboxes.html#owners,Mailbox[T]	mailboxes: owners[T](mail: Mailbox[T]): int	
+`=destroy`	insideout/mailboxes.html#=destroy,MailboxObj[T]	mailboxes: `=destroy`[T](box: var MailboxObj[T])	
+`=destroy`	insideout/mailboxes.html#=destroy,Mailbox[T]	mailboxes: `=destroy`[T](mail: var Mailbox[T])	
+`=copy`	insideout/mailboxes.html#=copy,Mailbox[T],Mailbox[T]	mailboxes: `=copy`[T](dest: var Mailbox[T]; src: Mailbox[T])	
+forget	insideout/mailboxes.html#forget,Mailbox	mailboxes: forget(mail: Mailbox)	
+newMailbox	insideout/mailboxes.html#newMailbox,int	mailboxes: newMailbox[T](initialSize: int = defaultInitialSize): Mailbox[T]	
+recv	insideout/mailboxes.html#recv,Mailbox[T]	mailboxes: recv[T](mail: Mailbox[T]): T	
+send	insideout/mailboxes.html#send,Mailbox[T],sinkT	mailboxes: send[T](mail: Mailbox[T]; message: sink T)	

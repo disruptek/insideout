@@ -1,0 +1,16 @@
+Semaphore	insideout/semaphores.html#Semaphore	semaphores: Semaphore	
+hash	insideout/semaphores.html#hash,Semaphore	semaphores: hash(s: var Semaphore): Hash	
+initSemaphore	insideout/semaphores.html#initSemaphore,Semaphore,int	semaphores: initSemaphore(s: var Semaphore; count: int = 0)	
+`=destroy`	insideout/semaphores.html#=destroy,Semaphore	semaphores: `=destroy`(s: var Semaphore)	
+`=copy`	insideout/semaphores.html#=copy,Semaphore,Semaphore	semaphores: `=copy`(s: var Semaphore; e: Semaphore)	
+acquire	insideout/semaphores.html#acquire,Semaphore	semaphores: acquire(s: var Semaphore)	
+release	insideout/semaphores.html#release,Semaphore	semaphores: release(s: var Semaphore)	
+withLock	insideout/semaphores.html#withLock.t,Semaphore,untyped	semaphores: withLock(s: var Semaphore; logic: untyped)	
+signal	insideout/semaphores.html#signal,Semaphore	semaphores: signal(s: var Semaphore)	
+wait	insideout/semaphores.html#wait,Semaphore	semaphores: wait(s: var Semaphore)	
+available	insideout/semaphores.html#available,Semaphore	semaphores: available(s: var Semaphore): int	
+isReady	insideout/semaphores.html#isReady.t,Semaphore	semaphores: isReady(s: var Semaphore): untyped	
+inc	insideout/semaphores.html#inc,Semaphore	semaphores: inc(s: var Semaphore)	
+dec	insideout/semaphores.html#dec,Semaphore	semaphores: dec(s: var Semaphore)	
+withLockedSemaphore	insideout/semaphores.html#withLockedSemaphore.m,Semaphore,typed	semaphores: withLockedSemaphore(s: var Semaphore; logic: typed): untyped	
+withSemaphore	insideout/semaphores.html#withSemaphore.t,Semaphore,typed	semaphores: withSemaphore(s: var Semaphore; logic: typed): untyped	
