@@ -56,11 +56,11 @@ const SmartService = whelp oracle
 proc application(home: Mailbox[Continuation]) {.cps: Continuation.} =
   # create a child service
   var sensei: Pool[Oracle, Query]
-  var address = sensei.fill.hatch SmartService
+  var address = sensei.fill.spawn SmartService
 
-  # fill the pool, hatching runtimes
+  # fill the pool, spawning runtimes
   while sensei.count < 100:
-    sensei.fill.hatch(SmartService, address)
+    sensei.fill.spawn(SmartService, address)
 
   # submit some questions, etc.
   var i = 100_000

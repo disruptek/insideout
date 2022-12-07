@@ -44,32 +44,32 @@ proc dispatcher[A, B](work: Work[A, B]) {.thread.} =
         {.cast(gcsafe).}:
           discard trampoline work.factory.call(work.mailbox[])
 
-proc hatch*[A, B](runtime: var Runtime[A, B]; mailbox: Mailbox[B]) =
+proc spawn*[A, B](runtime: var Runtime[A, B]; mailbox: Mailbox[B]) =
   ## add compute to mailbox
   runtime.mailbox = mailbox
   # XXX we assume that the runtime outlives the thread
   runtime.thread.data.mailbox = addr runtime.mailbox
   createThread(runtime.thread, dispatcher, runtime.thread.data)
 
-proc hatch*[A, B](runtime: var Runtime[A, B]): Mailbox[B] =
+proc spawn*[A, B](runtime: var Runtime[A, B]): Mailbox[B] =
   ## add compute and return new mailbox
   result = newMailbox[B]()
-  hatch(runtime, result)
+  spawn(runtime, result)
 
-proc hatch*[A, B](runtime: var Runtime[A, B]; factory: Factory[A, B]): Mailbox[B] =
+proc spawn*[A, B](runtime: var Runtime[A, B]; factory: Factory[A, B]): Mailbox[B] =
   ## create compute from a factory
   runtime.thread.data.factory = factory
-  result = hatch(runtime)
+  result = spawn(runtime)
 
-proc hatch*[A, B](runtime: var Runtime[A, B]; factory: Factory[A, B]; mailbox: Mailbox[B]) =
+proc spawn*[A, B](runtime: var Runtime[A, B]; factory: Factory[A, B]; mailbox: Mailbox[B]) =
   ## create compute from a factory and mailbox
   runtime.thread.data.factory = factory
-  hatch(runtime, mailbox)
+  spawn(runtime, mailbox)
 
-proc hatch*[A, B](factory: Factory[A, B]): Runtime[A, B] =
+proc spawn*[A, B](factory: Factory[A, B]): Runtime[A, B] =
   ## create compute from a factory
   result.thread.data.factory = factory
-  discard hatch(result)
+  discard spawn(result)
 
 proc quit*[A, B](runtime: var Runtime[A, B]) =
   ## ask the runtime to exit
