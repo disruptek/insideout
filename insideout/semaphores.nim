@@ -47,7 +47,8 @@ proc signal*(s: var Semaphore) =
   ## blocking signal of `s`; increments semaphore
   withLock s.lock:
     inc s.count
-    signal s.cond
+  # here because of drd?  --report-signal-unlocked=no
+  signal s.cond
 
 proc wait*(s: var Semaphore) =
   ## blocking wait on `s`
