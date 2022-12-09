@@ -47,18 +47,22 @@ proc signal*(s: var Semaphore) =
   ## blocking signal of `s`; increments semaphore
   withLock s.lock:
     inc s.count
-  # here because of drd?  --report-signal-unlocked=no
-  signal s.cond
+    # FIXME: move this out eventually
+    # here because of drd?  --report-signal-unlocked=no
+    signal s.cond
 
 proc wait*(s: var Semaphore) =
   ## blocking wait on `s`
-  while true:
-    acquire s.lock
+  template consume {.dirty.} =
     if s.count > 0:
       dec s.count
       release s.lock
       break
+  while true:
+    acquire s.lock
+    consume
     wait(s.cond, s.lock)
+    consume
     release s.lock
 
 proc available*(s: var Semaphore): int =
@@ -104,3 +108,18 @@ template withSemaphore*(s: var Semaphore; logic: typed): untyped =
     logic
   finally:
     signal s
+
+template trySemaphore*(s: var Semaphore; logic: typed): untyped =
+  if tryAcquire s.lock:
+    if s.count > 0:
+      dec s.count
+      try:
+        logic
+      finally:
+        release s.lock
+      true
+    else:
+      release s.lock
+      false
+  else:
+    false
