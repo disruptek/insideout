@@ -58,11 +58,11 @@ proc application(home: Mailbox[Continuation]) {.cps: Continuation.} =
   var address = sensei.fill.spawn SmartService
 
   # fill the pool, spawning runtimes
-  while sensei.count < 1000:
+  while sensei.count < 2:
     sensei.fill.spawn(SmartService, address)
 
   # submit some questions, etc.
-  var i = 10_000
+  var i = 10
   while i > 0:
     #echo "result of ", i, " is ", ask(address, i)
     discard ask(address, i)
