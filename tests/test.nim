@@ -46,41 +46,38 @@ proc oracle(mailbox: Mailbox[Query]) {.cps: Oracle.} =
       break
     else:
       rz query
-      #tempoline query
-      discard trampoline(query)
+      discard trampoline(move query)
+      doAssert query.isNil
 
 # define a service using a continuation bootstrap
 const SmartService = whelp oracle
 
 proc application(home: Mailbox[Continuation]) {.cps: Continuation.} =
   # create a child service
-  var sensei: Pool[Oracle, Query]
-  var address = sensei.fill.spawn SmartService
-
-  # fill the pool, spawning runtimes
-  while sensei.count < 2:
-    sensei.fill.spawn(SmartService, address)
+  var mail = newMailbox[Query]()
+  var pool = newPool[Oracle, Query](SmartService, mail)
 
   # submit some questions, etc.
-  var i = 10
+  var i = 1000
   while i > 0:
     #echo "result of ", i, " is ", ask(address, i)
-    discard ask(address, i)
+    discard ask(mail, i)
     goto home
     dec i
 
   # go home and drain the pool
   goto home
-  drain sensei
+  drain pool
   home.send nil.Continuation
 
 proc main =
   echo "\n\n\n"
   block:
-    var home = newMailbox[Continuation](1)
+    var home = newMailbox[Continuation]()
     var c = Continuation: whelp application(home)
     while not c.dismissed:
-      c = trampoline(c)
+      discard trampoline(move c)
+      doAssert c.isNil
       c = recv home
     echo "application complete"
   echo "program exit"
