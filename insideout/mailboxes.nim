@@ -17,6 +17,10 @@ type
   Mailbox*[T] = object  ## a queue for `T` values
     box: ptr MailboxObj[T]
 
+template debug(arguments: varargs[untyped]): untyped =
+  when not defined(release):
+    echo arguments
+
 proc isInitialized*(mail: Mailbox): bool {.inline.} =
   ## true if the mailbox has been initialized
   not mail.box.isNil
@@ -57,6 +61,7 @@ proc assertInitialized*(mail: Mailbox) =
 
 proc `=destroy`*[T](box: var MailboxObj[T]) =
   deinitLock box.lock
+  `=destroy`(box.deck)
   `=destroy`(box.write)
   `=destroy`(box.read)
 
@@ -65,12 +70,11 @@ proc `=destroy`*[T](mail: var Mailbox[T]) =
   if mail.isInitialized:
     let prior = fetchSub(mail.box.rc, 1, moAcquire)
     if prior == 0:
+      `=destroy`(mail.box)
       deallocShared mail.box
-      when not defined(release):
-        echo "destroy freed " & $mail & " in thread " & $getThreadId()
+      debug "destroy freed " & $mail & " in thread " & $getThreadId()
     else:
-      when not defined(release):
-        echo "destroy " & $mail & "; counter now " & $(prior - 1) & " in thread " & $getThreadId()
+      debug "destroy " & $mail & "; counter now " & $(prior - 1) & " in thread " & $getThreadId()
     mail.box = nil
 
 proc `=copy`*[T](dest: var Mailbox[T]; src: Mailbox[T]) =
@@ -80,7 +84,7 @@ proc `=copy`*[T](dest: var Mailbox[T]; src: Mailbox[T]) =
       src.box.rc += 1
     else:
       let was = fetchAdd(src.box.rc, 1)
-      echo "copy " & $src & "; counter now " & $(1 + was) & " in " & $getThreadId()
+      debug "copy ", src, "; counter now ", (1 + was), " in ", getThreadId()
   if dest.isInitialized:
     `=destroy`(dest)
   dest.box = src.box
@@ -98,7 +102,7 @@ proc forget*(mail: Mailbox) {.deprecated: "debugging tool".} =
       mail.box.rc -= 1
     else:
       let was = fetchSub(mail.box.rc, 1)
-      echo "forget " & $mail & "; counter now " & $(was - 1) & " in " & $getThreadId()
+      debug "forget ", mail, "; counter now ", (was - 1), " in ", getThreadId()
 
 proc newMailbox*[T](initialSize: Positive = defaultInitialSize): Mailbox[T] =
   ## create a new mailbox which can hold `initialSize` items
@@ -107,8 +111,7 @@ proc newMailbox*[T](initialSize: Positive = defaultInitialSize): Mailbox[T] =
   initLock result.box.lock
   initSemaphore(result.box.write, initialSize)
   initSemaphore(result.box.read, 0)
-  when not defined(release):
-    echo "init " & $result & ", size " & $initialSize & " in " & $getThreadId()
+  debug "init ", result, ", size ", initialSize, " in ", getThreadId()
 
 proc recv*[T](mail: Mailbox[T]): T =
   ## pop an item from the mailbox
