@@ -13,9 +13,15 @@ export runtime
 proc pthread_signal(thread: SysThread; signal: cint)
   {.importc: "pthread_kill", header: pthreadh.}
 
+template debug(arguments: varargs[typed]): untyped =
+  when not defined(release):
+    debug arguments
+
 proc goto*[T](c: sink T; where: Mailbox[T]): T {.cpsMagic.} =
   ## move the current continuation to another compute domain
+  debug "goto ", where
   where.send c
+  result = nil.T
 
 template tempoline*(supplied: typed): untyped =
   ## cps-able trampoline
@@ -30,3 +36,21 @@ template tempoline*(supplied: typed): untyped =
     if not c.dismissed:
       disarm c
       c = nil
+
+proc waitron(box: Mailbox[Continuation]) {.cps: Continuation.} =
+  ## generic blocking mailbox consumer
+  while true:
+    debug box, " recv"
+    var mail = recv box
+    debug box, " got mail"
+    if dismissed mail:
+      debug box, " dismissed"
+      break
+    else:
+      debug box, " run begin"
+      discard trampoline mail
+      debug box, " run end"
+  debug box, " end"
+
+const
+  ContinuationWaiter* = whelp waitron

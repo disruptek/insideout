@@ -1,5 +1,3 @@
-import std/locks
-
 import pkg/cps
 import pkg/insideout
 
@@ -23,7 +21,7 @@ proc ask(mailbox: Mailbox[Query]; x: int): int {.cps: Query.} =
   setupQueryWith x
   #echo "asking " & $x & " in " & $getThreadId()
   goto mailbox
-  #echo "recovering in " & $getThreadId()
+  #echo "recover " & $x & " in " & $getThreadId()
   result = value()
 
 proc rz(a: Oracle; b: Query): Oracle {.cpsMagic.} =
@@ -48,7 +46,8 @@ proc oracle(mailbox: Mailbox[Query]) {.cps: Oracle.} =
       break
     else:
       rz query
-      tempoline query
+      #tempoline query
+      discard trampoline(query)
 
 # define a service using a continuation bootstrap
 const SmartService = whelp oracle
@@ -59,28 +58,30 @@ proc application(home: Mailbox[Continuation]) {.cps: Continuation.} =
   var address = sensei.fill.spawn SmartService
 
   # fill the pool, spawning runtimes
-  while sensei.count < 100:
+  while sensei.count < 1000:
     sensei.fill.spawn(SmartService, address)
 
   # submit some questions, etc.
-  var i = 100_000
+  var i = 10_000
   while i > 0:
-    #echo "result is ", ask(address, i)
+    #echo "result of ", i, " is ", ask(address, i)
     discard ask(address, i)
+    goto home
     dec i
 
   # go home and drain the pool
   goto home
   drain sensei
+  home.send nil.Continuation
 
 proc main =
   echo "\n\n\n"
   block:
     var home = newMailbox[Continuation](1)
     var c = Continuation: whelp application(home)
-    c = trampoline(c)
-    c = recv home
-    c = trampoline(c)
+    while not c.dismissed:
+      c = trampoline(c)
+      c = recv home
     echo "application complete"
   echo "program exit"
 
