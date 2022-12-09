@@ -26,7 +26,6 @@ proc main =
       check box == bix
       box = newMailbox[RS](2)
       box.assertInitialized
-      check box.capacity == 2
       check box != bix
       check box.owners == 1
       bix = box
