@@ -15,7 +15,7 @@ proc pthread_signal(thread: SysThread; signal: cint)
 
 template debug(arguments: varargs[typed]): untyped =
   when not defined(release):
-    debug arguments
+    echo arguments
 
 proc goto*[T](c: sink T; where: Mailbox[T]): T {.cpsMagic.} =
   ## move the current continuation to another compute domain
