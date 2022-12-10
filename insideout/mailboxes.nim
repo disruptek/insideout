@@ -17,6 +17,14 @@ type
   Mailbox*[T] = object  ## a queue for `T` values
     box: ptr MailboxObj[T]
 
+proc `=copy`*[T](dest: var MailboxObj[T]; src: MailboxObj[T]) {.error.}
+
+proc `=destroy`[T](box: var MailboxObj[T]) =
+  deinitLock box.lock
+  `=destroy`(box.deck)
+  `=destroy`(box.write)
+  `=destroy`(box.read)
+
 template debug(arguments: varargs[untyped]): untyped =
   when not defined(release):
     echo arguments
@@ -59,20 +67,14 @@ proc assertInitialized*(mail: Mailbox) =
   if unlikely (not mail.isInitialized):
     raise ValueError.newException "mailbox uninitialized"
 
-proc `=destroy`*[T](box: var MailboxObj[T]) =
-  deinitLock box.lock
-  `=destroy`(box.deck)
-  `=destroy`(box.write)
-  `=destroy`(box.read)
-
 proc `=destroy`*[T](mail: var Mailbox[T]) =
   # permit destroy of unassigned mailboxen
   if mail.isInitialized:
     let prior = fetchSub(mail.box.rc, 1, moAcquire)
     if prior == 0:
-      `=destroy`(mail.box)
+      debug "destroy freeing " & $mail & " in thread " & $getThreadId()
+      `=destroy`(mail.box[])
       deallocShared mail.box
-      debug "destroy freed " & $mail & " in thread " & $getThreadId()
     else:
       debug "destroy " & $mail & "; counter now " & $(prior - 1) & " in thread " & $getThreadId()
     mail.box = nil
