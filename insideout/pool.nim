@@ -57,14 +57,8 @@ proc newPool*[A, B](factory: Factory[A, B]; mailbox: Mailbox[B]; initialSize: Po
 
 # FIXME: temp-to-perm
 type
-  ContinuationPool*[T] = SinglyLinkedList[ContinuationRuntime[T]]
+  ContinuationPool*[T] = Pool[Continuation, T]
   ContinuationFactory[T] = Factory[Continuation, T]
-
-template spawn*[T](pool: var ContinuationPool[T]; factory: ContinuationFactory[T]; mailbox: Mailbox[T]) =
-  pool.spawn(factory, mailbox)
-
-template newPool*[T](factory: ContinuationFactory[T]; mailbox: Mailbox[T]; initialSize: Positive = 1): ContinuationPool[T] =
-  newPool(factory, mailbox, initialSize)
 
 proc count*(pool: Pool): int =
   ## count the number of runtimes in the pool
