@@ -64,7 +64,7 @@ template spawn*[T](pool: var ContinuationPool[T]; factory: ContinuationFactory[T
   pool.spawn(factory, mailbox)
 
 template newPool*[T](factory: ContinuationFactory[T]; mailbox: Mailbox[T]; initialSize: Positive = 1): ContinuationPool[T] =
-  newPool(factory, mailbox)
+  newPool(factory, mailbox, initialSize)
 
 proc count*(pool: Pool): int =
   ## count the number of runtimes in the pool
