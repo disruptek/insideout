@@ -7,24 +7,25 @@ import insideout/mailboxes
 
 type
   PoolNode[A, B] = SinglyLinkedNode[Runtime[A, B]]
-  Pool*[A, B] = distinct SinglyLinkedList[Runtime[A, B]]  ## a collection of runtimes
+  Pool*[A, B] = object  ## a collection of runtimes
+    list: SinglyLinkedList[Runtime[A, B]]
   Factory[A, B] = proc(mailbox: Mailbox[B]) {.cps: A.}
 
 proc remove*[A, B](pool: var Pool[A, B]; node: PoolNode[A, B]): bool {.discardable.} =
   ## work around sigmatch
-  SinglyLinkedList[Runtime[A, B]](pool).remove(node)
+  pool.list.remove(node)
 
 proc prepend*[A, B](pool: var Pool[A, B]; node: PoolNode[A, B]) =
   ## work around sigmatch
-  SinglyLinkedList[Runtime[A, B]](pool).prepend(node)
+  pool.list.prepend(node)
 
 proc head*[A, B](pool: Pool[A, B]): PoolNode[A, B] =
   ## work around sigmatch
-  SinglyLinkedList[Runtime[A, B]](pool).head
+  pool.list.head
 
 iterator mitems*[A, B](pool: var Pool[A, B]): var Runtime[A, B] =
   ## work around sigmatch
-  for item in SinglyLinkedList[Runtime[A, B]](pool).mitems:
+  for item in pool.list.mitems:
     yield item
 
 proc drain*(pool: var Pool) =
@@ -39,11 +40,18 @@ proc drain*(pool: var Pool) =
     join pool.head.value
     pool.remove(pool.head)
 
+proc `=destroy`*[A, B](dest: var Pool[A, B]) =
+  drain dest
+
+proc `=copy`*[A, B](dest: var Pool[A, B]; src: Pool[A, B]) =
+  `=destroy`(dest)
+  dest.list = src.list
+
 proc fill*[A, B](pool: var Pool[A, B]): var Runtime[A, B] =
   ## add a runtime to the pool
   var node: SinglyLinkedNode[Runtime[A, B]]
   new node
-  pool.prepend node
+  pool.list.prepend node
   result = node.value
 
 proc spawn*[A, B](pool: var Pool[A, B]; factory: Factory[A, B]; mailbox: Mailbox[B]) =

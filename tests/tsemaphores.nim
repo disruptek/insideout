@@ -3,7 +3,7 @@ import pkg/balls
 import insideout/semaphores
 
 proc main =
-  block balls_wont_work_here:
+  suite "semaphores":
     var s: Semaphore
     initSemaphore(s, 2)
     check s.available == 2
