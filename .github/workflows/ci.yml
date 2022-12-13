@@ -72,7 +72,7 @@ jobs:
         run: |
           cd project
           nimble --accept develop
-          nimble --accept install "https://github.com/disruptek/balls@4.0.0"
+          nimble --accept install "https://github.com/disruptek/balls@4.0.1"
           balls --panics:on --backend:c --mm:arc --mm:orc
 
       - name: Build docs
