@@ -89,12 +89,12 @@ proc spawn*[A, B](runtime: var Runtime[A, B]; factory: Factory[A, B]; mailbox: M
   runtime.thread.data.factory = factory
   spawn(runtime, mailbox)
 
-proc spawn*[A, B](factory: Factory[A, B]): Runtime[A, B] =
+proc spawn*[A, B](factory: Factory[A, B]): var Runtime[A, B] =
   ## create compute from a factory
   result.thread.data.factory = factory
   discard spawn(result)
 
-proc spawn*[A, B](factory: Factory[A, B]; mailbox: Mailbox[B]): Runtime[A, B] =
+proc spawn*[A, B](factory: Factory[A, B]; mailbox: Mailbox[B]): var Runtime[A, B] =
   ## create compute from a factory and mailbox
   spawn(result, factory, mailbox)
 
@@ -111,3 +111,10 @@ proc running*(runtime: var Runtime): bool {.inline.} =
 proc mailbox*[A, B](runtime: var Runtime[A, B]): Mailbox[B] {.inline.} =
   ## recover the mailbox from the runtime
   runtime.mailbox
+
+proc pinToCpu*(runtime: var Runtime; cpu: Natural) {.inline.} =
+  ## assign a runtime to a specific cpu index
+  if runtime.ran:
+    pinToCpu(runtime.thread, cpu)
+  else:
+    raise ValueError.newException "runtime unready to pin"
