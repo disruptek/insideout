@@ -152,3 +152,11 @@ proc trySend*[T](mail: Mailbox[T]; message: var T): bool =
           move message
   if result:
     signal mail.box.read
+
+proc tryMoveMail*[T](a, b: Mailbox[T]) =
+  ## try to move items from mailbox `a` into mailbox `b`
+  var item: T
+  block complete:
+    while a.tryRecv(item):
+      if not b.trySend(item):
+        break complete
