@@ -26,7 +26,7 @@ proc `=copy`*[A, B](runtime: var Runtime[A, B]; other: Runtime[A, B]) {.error.} 
 
 proc ran*(runtime: var Runtime): bool =
   ## true if the runtime has run
-  runtime.mailbox.isInitialized
+  not runtime.mailbox.isNil
 
 proc hash*(runtime: var Runtime): Hash =
   ## whatfer inclusion in a table, etc.
@@ -57,7 +57,7 @@ template assertReady(work: Work): untyped =
     raise ValueError.newException "nil mailbox"
   elif work.factory.fn.isNil:
     raise ValueError.newException "nil factory function"
-  elif not work.mailbox[].isInitialized:
+  elif work.mailbox[].isNil:
     raise ValueError.newException "mailbox uninitialized"
 
 proc dispatcher(work: Work) {.thread.} =
