@@ -13,7 +13,7 @@ export runtime
 proc pthread_signal(thread: SysThread; signal: cint)
   {.importc: "pthread_kill", header: pthreadh.}
 
-template debug(arguments: varargs[untyped]): untyped =
+template debug(arguments: varargs[untyped, `$`]): untyped =
   when not defined(release):
     echo arguments
 

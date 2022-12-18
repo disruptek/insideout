@@ -40,15 +40,15 @@ proc `==`*[A, B](a: Mailbox[A]; b: Mailbox[B]): bool =
   hash(a) == hash(b)
 
 proc `$`*(mail: Mailbox): string =
-  if mail.isInitialized:
+  if mail.isNil:
+    result = "<box:nil>"
+  else:
     result = "<box:"
     result.add:
       hash(mail).int.toHex(6)
     result.add: "#"
     result.add: $mail.owners
     result.add ">"
-  else:
-    result.add "<box:nil>"
 
 proc newMailbox*[T](initialSize: Positive = defaultInitialSize): Mailbox[T] =
   ## create a new mailbox which can hold `initialSize` items
