@@ -19,7 +19,7 @@ proc main =
   block balls_breaks_destructor_semantics:
     block:
       ## basics
-      check not box.isInitialized
+      check box.isNil
       expect ValueError:
         box.assertInitialized
       check box.owners == 0
@@ -70,8 +70,8 @@ proc main =
     block:
       ## missing mailboxes
       check missing == MissingMailbox
-      check not missing.isInitialized
-      check not MissingMailbox.isInitialized
+      check missing.isNil
+      check MissingMailbox.isNil
     block:
       ## try modes
       var one = rs"one"
