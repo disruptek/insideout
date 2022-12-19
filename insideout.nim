@@ -2,13 +2,13 @@ import std/private/threadtypes
 
 import pkg/cps
 
-import insideout/pool
+import insideout/pools
 import insideout/mailboxes
-import insideout/runtime
+import insideout/runtimes
 
-export pool
+export pools
 export mailboxes
-export runtime
+export runtimes
 
 proc pthread_signal(thread: SysThread; signal: cint)
   {.importc: "pthread_kill", header: pthreadh.}

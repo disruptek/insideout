@@ -2,7 +2,7 @@ import std/lists
 
 import pkg/cps
 
-import insideout/runtime
+import insideout/runtimes
 import insideout/mailboxes
 
 type
@@ -50,17 +50,26 @@ proc `=copy`*[A, B](dest: var Pool[A, B]; src: Pool[A, B]) =
   `=destroy`(dest)
   dest.list = src.list
 
-proc fill*[A, B](pool: var Pool[A, B]): var Runtime[A, B] =
-  ## add a runtime to the pool
+proc add*[A, B](pool: var Pool[A, B]; runtime: Runtime[A, B]) =
   var node: SinglyLinkedNode[Runtime[A, B]]
   new node
-  #echo "++ add node ", cast[uint](node), " in thread ", getThreadId()
-  new node.value
-  #echo "++ add value ", cast[uint](address node.value), " in thread ", getThreadId()
+  node.value = runtime
   pool.list.prepend node
-  result = node.value
 
-proc spawn*[A, B](pool: var Pool[A, B]; factory: Factory[A, B]; mailbox: Mailbox[B]): var Runtime[A, B] =
+proc fill*[A, B](pool: var Pool[A, B]): Runtime[A, B] =
+  ## add a runtime to the pool
+  new result
+  pool.add result
+  when false:
+    var node: SinglyLinkedNode[Runtime[A, B]]
+    new node
+    #echo "++ add node ", cast[uint](node), " in thread ", getThreadId()
+    new node.value
+    #echo "++ add value ", cast[uint](address node.value), " in thread ", getThreadId()
+    pool.list.prepend node
+    result = node.value
+
+proc spawn*[A, B](pool: var Pool[A, B]; factory: Factory[A, B]; mailbox: Mailbox[B]): Runtime[A, B] =
   result = fill pool
   result.spawn(factory, mailbox)
 
