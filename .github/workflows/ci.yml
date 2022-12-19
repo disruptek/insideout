@@ -72,8 +72,8 @@ jobs:
         run: |
           cd project
           nimble --accept develop
-          nimble --accept install "https://github.com/disruptek/balls@4.0.1"
-          balls --panics:on --backend:c --mm:arc --mm:orc
+          nimble --accept install "https://github.com/disruptek/balls@v4"
+          balls --panics:on --backend:c --mm:arc --define:ballsUseValgrind=no
 
       - name: Build docs
         shell: bash
