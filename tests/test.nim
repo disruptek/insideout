@@ -67,7 +67,7 @@ proc application(home: Mailbox[Continuation]) {.cps: Continuation.} =
 
   # go home and drain the pool
   goto home
-  drain pool
+  shutdown pool
   home.send nil.Continuation
 
 proc main =

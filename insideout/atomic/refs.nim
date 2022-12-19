@@ -40,6 +40,9 @@ proc owners*[T](arc: AtomicRef[T]): int {.inline.} =
 proc new*[T](arc: var AtomicRef[T]) {.inline.} =
   if arc.isNil:
     arc.reference = cast[ptr Reference[T]](allocShared0(sizeof Reference[T]))
+    # NOTE: we cannot destroy/reset the arc.reference.value here because
+    #       it might contain a thread or mutex or condvar, etc.
+    #store(arc.reference.rc, 0, moRelease)
   else:
     raise Defect.newException "attempt to reinitialize atomic ref"
 
@@ -54,3 +57,6 @@ proc `[]`*[T](arc: AtomicRef[T]): var T {.inline.} =
     raise Defect.newException "dereference of nil atomic ref " & $T
   else:
     result = arc.reference[].value
+
+proc address*(arc: AtomicRef): pointer {.inline.} =
+  arc.reference

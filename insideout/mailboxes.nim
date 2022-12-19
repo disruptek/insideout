@@ -1,12 +1,11 @@
-import std/atomics
 import std/deques
 import std/hashes
 import std/locks
 import std/strutils
 
 import insideout/semaphores
-import insideout/atomicrefs
-export atomicrefs
+import insideout/atomic/refs
+export refs
 
 type
   MailboxObj[T] = object
@@ -21,15 +20,17 @@ type
 proc `=copy`*[T](dest: var MailboxObj[T]; src: MailboxObj[T]) {.error.}
 
 proc `=destroy`[T](box: var MailboxObj[T]) =
+  mixin `=destroy`
   deinitLock box.lock
-  when T is not void:
+  when T isnot void:
     `=destroy`(box.deck)
   `=destroy`(box.write)
   `=destroy`(box.read)
 
 proc hash*(mail: var Mailbox): Hash =
   ## whatfer inclusion in a table, etc.
-  hash(cast[int](mail[]))
+  mixin address
+  hash cast[int](address mail)
 
 const
   MissingMailbox* = default(Mailbox[void])  ##
@@ -37,6 +38,7 @@ const
 
 proc `==`*[A, B](a: Mailbox[A]; b: Mailbox[B]): bool =
   ## two mailboxes are identical if they have the same hash
+  mixin hash
   hash(a) == hash(b)
 
 proc `$`*(mail: Mailbox): string =
@@ -50,6 +52,17 @@ proc `$`*(mail: Mailbox): string =
     result.add: $mail.owners
     result.add ">"
 
+proc assertInitialized*(mail: Mailbox) =
+  ## raise a ValueError if the mailbox is not initialized
+  if unlikely mail.isNil:
+    raise ValueError.newException "mailbox uninitialized"
+
+proc len*[T](mail: Mailbox[T]): int =
+  ## length of the mailbox
+  assertInitialized mail
+  withLock mail[].lock:
+    result = len mail[].deck
+
 proc newMailbox*[T](initialSize: Positive = defaultInitialSize): Mailbox[T] =
   ## create a new mailbox which can hold `initialSize` items
   new result
@@ -58,11 +71,6 @@ proc newMailbox*[T](initialSize: Positive = defaultInitialSize): Mailbox[T] =
   initLock result[].lock
   initSemaphore(result[].write, initialSize)
   initSemaphore(result[].read, 0)
-
-proc assertInitialized*(mail: Mailbox) =
-  ## raise a ValueError if the mailbox is not initialized
-  if unlikely mail.isNil:
-    raise ValueError.newException "mailbox uninitialized"
 
 proc recv*[T](mail: Mailbox[T]): T =
   ## pop an item from the mailbox
@@ -109,9 +117,3 @@ proc tryMoveMail*[T](a, b: Mailbox[T]) =
     while a.tryRecv(item):
       if not b.trySend(item):
         break complete
-
-proc len*[T](mail: Mailbox[T]): int =
-  ## length of the mailbox
-  assertInitialized mail
-  withLock mail[].lock:
-    result = len mail[].deck
