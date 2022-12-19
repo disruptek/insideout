@@ -19,7 +19,7 @@ proc drain*[A, B](pool: var Pool[A, B]) =
   ## has no effect if the pool is empty
   if not pool.isEmpty:
     if not pool.list.remove(pool.list.head):
-      raise Defect.newException "remove fail"
+      raise ValueError.newException "remove race"
 
 iterator mitems*[A, B](pool: var Pool[A, B]): var Runtime[A, B] =
   ## work around sigmatch

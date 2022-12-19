@@ -44,7 +44,7 @@ proc new*[T](arc: var AtomicRef[T]) {.inline.} =
     #       it might contain a thread or mutex or condvar, etc.
     #store(arc.reference.rc, 0, moRelease)
   else:
-    raise Defect.newException "attempt to reinitialize atomic ref"
+    raise ValueError.newException "attempt to reinitialize atomic ref"
 
 converter dereference*[T](arc: AtomicRef[T]): var T {.inline.} =
   if arc.isNil:
