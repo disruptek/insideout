@@ -18,6 +18,8 @@ proc drain*[A, B](pool: var Pool[A, B]) =
   ## remove a runtime from the pool;
   ## has no effect if the pool is empty
   if not pool.isEmpty:
+    #echo "-- remove node ", cast[uint](pool.list.head), " in thread ", getThreadId()
+    #echo "-- remove value ", cast[uint](address pool.list.head.value), " in thread ", getThreadId()
     if not pool.list.remove(pool.list.head):
       raise ValueError.newException "remove race"
 
@@ -52,8 +54,9 @@ proc fill*[A, B](pool: var Pool[A, B]): var Runtime[A, B] =
   ## add a runtime to the pool
   var node: SinglyLinkedNode[Runtime[A, B]]
   new node
+  #echo "++ add node ", cast[uint](node), " in thread ", getThreadId()
   new node.value
-  echo "++ add node with arc ", cast[uint](addr node.value)
+  #echo "++ add value ", cast[uint](address node.value), " in thread ", getThreadId()
   pool.list.prepend node
   result = node.value
 
