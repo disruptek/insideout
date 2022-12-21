@@ -1,5 +1,3 @@
-import std/private/threadtypes
-
 import pkg/cps
 
 import insideout/pools
@@ -9,9 +7,6 @@ import insideout/runtimes
 export pools
 export mailboxes
 export runtimes
-
-proc pthread_signal(thread: SysThread; signal: cint)
-  {.importc: "pthread_kill", header: pthreadh.}
 
 template debug(arguments: varargs[untyped, `$`]): untyped =
   when not defined(release):

@@ -1,36 +1,55 @@
+import std/atomics
 import std/hashes
 import std/strutils
 
 import pkg/cps
 
 import insideout/atomic/refs
-import insideout/mailboxes
 export refs
+
+import insideout/mailboxes
+import insideout/threads
 
 type
   Factory[A, B] = proc(mailbox: Mailbox[B]) {.cps: A.}
 
+  RuntimeState* = enum
+    Uninitialized
+    Launching
+    Running
+    Stopping
+    Stopped
+
   Work[A, B] = object
     factory: Factory[A, B]
     mailbox: ptr Mailbox[B]
+    runtime: ptr RuntimeObj[A, B]
 
   RuntimeObj[A, B] = object
     mailbox: Mailbox[B]
     thread: Thread[Work[A, B]]
+    state: Atomic[RuntimeState]
+    result: cint
 
   Runtime*[A, B] = AtomicRef[RuntimeObj[A, B]]
-
-  ContinuationFactory[T] = Factory[Continuation, T]
-  ContinuationWork[T] = Work[Continuation, T]
   ContinuationRuntime*[T] = Runtime[Continuation, T]
 
 proc `=copy`*[A, B](runtime: var RuntimeObj[A, B]; other: RuntimeObj[A, B]) {.error.} =
   ## copies are denied
   discard
 
+proc state(runtime: var RuntimeObj): RuntimeState =
+  load(runtime.state, moAcquire)
+
+proc state*(runtime: Runtime): RuntimeState =
+  if runtime.isNil:
+    Uninitialized
+  else:
+    state runtime[]
+
 proc ran*[A, B](runtime: var Runtime[A, B]): bool =
   ## true if the runtime has run
-  not runtime.isNil and not runtime[].mailbox.isNil
+  state(runtime) >= Launching
 
 proc hash*(runtime: var Runtime): Hash =
   ## whatfer inclusion in a table, etc.
@@ -40,30 +59,34 @@ proc hash*(runtime: var Runtime): Hash =
 proc `$`*(runtime: var Runtime): string =
   result = "<run:"
   result.add hash(runtime).int.toHex(6)
-  if runtime.ran:
-    result.add: ".ran"
+  result.add "-"
+  result.add $runtime.state
   result.add ">"
 
 proc `==`*(a, b: Runtime): bool =
   mixin hash
   hash(a) == hash(b)
 
-proc join*(runtime: var RuntimeObj) {.inline.} =
+proc join(runtime: var RuntimeObj): int {.inline.} =
+  var status = state runtime
+  if status >= Launching:
+    # spin until the thread is running
+    while status == Launching:
+      status = state runtime
+    let value = cast[pointer](addr runtime.result)
+    result = pthreadJoin(runtime.thread.sys, addr value)
+    store(runtime.state, Stopped)
+
+proc join*(runtime: var Runtime): int {.discardable, inline.} =
   ## wait for a running runtime to stop running;
   ## returns immediately if the runtime never ran
-  if not runtime.mailbox.isNil:
-    joinThread runtime.thread
-    reset runtime.mailbox
-
-proc join*(runtime: var Runtime) {.inline.} =
   join runtime[]
 
 proc `=destroy`*[A, B](runtime: var RuntimeObj[A, B]) =
   ## ensure the runtime has stopped before it is destroyed
   mixin `=destroy`
-  mixin join
-  join runtime
-  reset runtime.thread.data.mailbox
+  discard join runtime
+  reset runtime.mailbox
   `=destroy`(runtime.thread)
 
 template assertReady(work: Work): untyped =
@@ -73,12 +96,20 @@ template assertReady(work: Work): untyped =
     raise ValueError.newException "nil factory function"
   elif work.mailbox[].isNil:
     raise ValueError.newException "mailbox uninitialized"
+  elif work.runtime.isNil:
+    raise ValueError.newException "unbound to thread"
+  elif load(work.runtime[].state, moAcquire) > Launching:
+    raise ValueError.newException "already launched"
 
 proc dispatcher(work: Work) {.thread.} =
   ## thread-local continuation dispatch
   assertReady work
-  {.cast(gcsafe).}:
-    discard trampoline work.factory.call(work.mailbox[])
+  store(work.runtime[].state, Running)
+  try:
+    {.cast(gcsafe).}:
+      discard trampoline work.factory.call(work.mailbox[])
+  finally:
+    store(work.runtime[].state, Stopping)
 
 template factory(runtime: var Runtime): untyped =
   runtime[].thread.data.factory
@@ -93,7 +124,10 @@ proc spawn*[A, B](runtime: var Runtime[A, B]; mailbox: Mailbox[B]) =
     runtime[].mailbox = mailbox
     # XXX we assume that the runtime outlives the thread
     runtime[].thread.data.mailbox = addr runtime[].mailbox
+    # XXX we assume that the runtime address begins with the runtime object
+    runtime[].thread.data.runtime = addr runtime[]
     assertReady runtime[].thread.data
+    store(runtime[].state, Launching)
     createThread(runtime[].thread, dispatcher, runtime[].thread.data)
 
 proc spawn*[A, B](runtime: var Runtime[A, B]): Mailbox[B] =
@@ -137,7 +171,7 @@ proc quit*[A, B](runtime: var Runtime[A, B]) =
 
 proc running*(runtime: var Runtime): bool {.inline.} =
   ## true if the runtime yet runs
-  runtime[].thread.running
+  runtime.state in {Launching, Running}
 
 proc mailbox*[A, B](runtime: var Runtime[A, B]): Mailbox[B] {.inline.} =
   ## recover the mailbox from the runtime
