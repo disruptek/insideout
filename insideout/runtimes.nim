@@ -73,9 +73,10 @@ proc join(runtime: var RuntimeObj): int {.inline.} =
     # spin until the thread is running
     while status == Launching:
       status = state runtime
-    let value = cast[pointer](addr runtime.result)
-    result = pthreadJoin(runtime.thread.sys, addr value)
-    store(runtime.state, Stopped)
+    if status < Stopped:
+      let value = cast[pointer](addr runtime.result)
+      result = pthreadJoin(runtime.thread.sys, addr value)
+      store(runtime.state, Stopped)
 
 proc join*(runtime: var Runtime): int {.discardable, inline.} =
   ## wait for a running runtime to stop running;
