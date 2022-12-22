@@ -12,13 +12,16 @@ template debug(arguments: varargs[untyped, `$`]): untyped =
   when not defined(release):
     echo arguments
 
-proc goto*[T](c: sink T; where: Mailbox[T]): T {.cpsMagic.} =
+proc goto*[T](continuation: var T; where: Mailbox[T]): T {.cpsMagic.} =
   ## move the current continuation to another compute domain
   debug "goto ", where
-  where.send c
+  # we want to be sure that a future destroy finds nothing,
+  # so we move the continuation and then send /that/ ref.
+  var message = move continuation
+  where.send message
   result = nil.T
 
-template tempoline*(supplied: typed): untyped =
+template tempoline(supplied: typed): untyped {.deprecated.} =
   ## cps-able trampoline
   block:
     var c: Continuation = move supplied
