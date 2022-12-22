@@ -52,7 +52,7 @@ jobs:
       fail-fast: false
       matrix:
         os: ['macos-latest', 'ubuntu-latest']
-        nim: ['devel']
+        nim: ['version-2-0']
     name: '${{ matrix.os }} (${{ matrix.nim }})'
     runs-on: ${{ matrix.os }}
     steps:
@@ -72,11 +72,13 @@ jobs:
         run: |
           cd project
           nimble --accept develop
-          nimble --accept install "https://github.com/disruptek/balls@v4"
-          balls --panics:on --backend:c --mm:arc --define:ballsUseValgrind=no
+          nimble --accept install "https://github.com/disruptek/balls@#4.0.5"
+          balls
 
       - name: Build docs
         shell: bash
+        if: >
+          matrix.os == 'macos-latest' && matrix.nim == 'version-2-0'
         run: |
           cd project
           branch=${{ github.ref }}
@@ -92,7 +94,7 @@ jobs:
       - name: Publish docs
         if: >
           github.event_name == 'push' && github.ref == 'refs/heads/master' &&
-          matrix.os == 'ubuntu-latest' && matrix.nim == 'devel'
+          matrix.os == 'macos-latest' && matrix.nim == 'version-2-0'
         uses: crazy-max/ghaction-github-pages@v3.1.0
         with:
           build_dir: project/docs

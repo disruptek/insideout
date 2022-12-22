@@ -3,4 +3,4 @@ author = "disruptek"
 description = "insideout"
 license = "MIT"
 
-requires "https://github.com/nim-works/cps##master"
+requires "https://github.com/nim-works/cps"
