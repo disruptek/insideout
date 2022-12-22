@@ -91,16 +91,17 @@ proc `=destroy`*[A, B](runtime: var RuntimeObj[A, B]) =
   `=destroy`(runtime.thread)
 
 template assertReady(work: Work): untyped =
-  if work.mailbox.isNil:
-    raise ValueError.newException "nil mailbox"
-  elif work.factory.fn.isNil:
-    raise ValueError.newException "nil factory function"
-  elif work.mailbox[].isNil:
-    raise ValueError.newException "mailbox uninitialized"
-  elif work.runtime.isNil:
-    raise ValueError.newException "unbound to thread"
-  elif load(work.runtime[].state, moAcquire) > Launching:
-    raise ValueError.newException "already launched"
+  when not defined(danger):  # if this isn't dangerous, i don't know what is
+    if work.mailbox.isNil:
+      raise ValueError.newException "nil mailbox"
+    elif work.factory.fn.isNil:
+      raise ValueError.newException "nil factory function"
+    elif work.mailbox[].isNil:
+      raise ValueError.newException "mailbox uninitialized"
+    elif work.runtime.isNil:
+      raise ValueError.newException "unbound to thread"
+    elif load(work.runtime[].state, moAcquire) > Launching:
+      raise ValueError.newException "already launched"
 
 proc dispatcher(work: Work) {.thread.} =
   ## thread-local continuation dispatch
