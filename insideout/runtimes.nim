@@ -76,7 +76,7 @@ proc join(runtime: var RuntimeObj): int {.inline.} =
     if status < Stopped:
       let value = cast[pointer](addr runtime.result)
       result = pthreadJoin(runtime.thread.sys, addr value)
-      store(runtime.state, Stopped)
+      store(runtime.state, Stopped, moRelease)
 
 proc join*(runtime: var Runtime): int {.discardable, inline.} =
   ## wait for a running runtime to stop running;
@@ -106,12 +106,12 @@ template assertReady(work: Work): untyped =
 proc dispatcher(work: Work) {.thread.} =
   ## thread-local continuation dispatch
   assertReady work
-  store(work.runtime[].state, Running)
+  store(work.runtime[].state, Running, moRelease)
   try:
     {.cast(gcsafe).}:
       discard trampoline work.factory.call(work.mailbox[])
   finally:
-    store(work.runtime[].state, Stopping)
+    store(work.runtime[].state, Stopping, moRelease)
 
 template factory(runtime: var Runtime): untyped =
   runtime[].thread.data.factory
@@ -129,7 +129,7 @@ proc spawn*[A, B](runtime: var Runtime[A, B]; mailbox: Mailbox[B]) =
     # XXX we assume that the runtime address begins with the runtime object
     runtime[].thread.data.runtime = addr runtime[]
     assertReady runtime[].thread.data
-    store(runtime[].state, Launching)
+    store(runtime[].state, Launching, moRelease)
     createThread(runtime[].thread, dispatcher, runtime[].thread.data)
 
 proc spawn*[A, B](runtime: var Runtime[A, B]): Mailbox[B] =
