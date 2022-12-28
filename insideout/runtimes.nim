@@ -39,7 +39,7 @@ proc `=copy`*[A, B](runtime: var RuntimeObj[A, B]; other: RuntimeObj[A, B]) {.er
   discard
 
 proc state(runtime: var RuntimeObj): RuntimeState =
-  load(runtime.state, moAcquire)
+  load(runtime.state)
 
 proc state*(runtime: Runtime): RuntimeState =
   if runtime.isNil:
@@ -76,7 +76,7 @@ proc join(runtime: var RuntimeObj): int {.inline.} =
     if status < Stopped:
       let value = cast[pointer](addr runtime.result)
       result = pthreadJoin(runtime.thread.sys, addr value)
-      store(runtime.state, Stopped, moRelease)
+      store(runtime.state, Stopped)
 
 proc join*(runtime: var Runtime): int {.discardable, inline.} =
   ## wait for a running runtime to stop running;
@@ -100,18 +100,18 @@ template assertReady(work: Work): untyped =
       raise ValueError.newException "mailbox uninitialized"
     elif work.runtime.isNil:
       raise ValueError.newException "unbound to thread"
-    elif load(work.runtime[].state, moAcquire) > Launching:
+    elif load(work.runtime[].state) > Launching:
       raise ValueError.newException "already launched"
 
 proc dispatcher(work: Work) {.thread.} =
   ## thread-local continuation dispatch
   assertReady work
-  store(work.runtime[].state, Running, moRelease)
+  store(work.runtime[].state, Running)
   try:
     {.cast(gcsafe).}:
       discard trampoline work.factory.call(work.mailbox[])
   finally:
-    store(work.runtime[].state, Stopping, moRelease)
+    store(work.runtime[].state, Stopping)
 
 template factory(runtime: var Runtime): untyped =
   runtime[].thread.data.factory
@@ -129,7 +129,7 @@ proc spawn*[A, B](runtime: var Runtime[A, B]; mailbox: Mailbox[B]) =
     # XXX we assume that the runtime address begins with the runtime object
     runtime[].thread.data.runtime = addr runtime[]
     assertReady runtime[].thread.data
-    store(runtime[].state, Launching, moRelease)
+    store(runtime[].state, Launching)
     createThread(runtime[].thread, dispatcher, runtime[].thread.data)
 
 proc spawn*[A, B](runtime: var Runtime[A, B]): Mailbox[B] =
