@@ -51,7 +51,7 @@ proc ran*[A, B](runtime: var Runtime[A, B]): bool =
   ## true if the runtime has run
   state(runtime) >= Launching
 
-proc hash*(runtime: var Runtime): Hash =
+proc hash*(runtime: Runtime): Hash =
   ## whatfer inclusion in a table, etc.
   mixin address
   hash cast[int](address runtime)
