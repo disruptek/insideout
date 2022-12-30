@@ -46,7 +46,7 @@ proc waitron(box: Mailbox[Continuation]) {.cps: Continuation.} =
       break
     else:
       debug box, " run begin"
-      discard trampoline mail
+      discard trampoline(move mail)
       debug box, " run end"
   debug box, " end"
 
