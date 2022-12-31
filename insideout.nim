@@ -21,20 +21,6 @@ proc goto*[T](continuation: var T; where: Mailbox[T]): T {.cpsMagic.} =
   where.send message
   result = nil.T
 
-template tempoline(supplied: typed): untyped {.deprecated.} =
-  ## cps-able trampoline
-  block:
-    var c: Continuation = move supplied
-    while c.running:
-      try:
-        c = c.fn(c)
-      except Exception:
-        writeStackFrames()
-        raise
-    if not c.dismissed:
-      disarm c
-      c = nil
-
 proc waitron(box: Mailbox[Continuation]) {.cps: Continuation.} =
   ## generic blocking mailbox consumer
   while true:
