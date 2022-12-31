@@ -19,10 +19,9 @@ proc value(c: Query): int {.cpsVoodoo.} = c.y
 proc ask(mailbox: Mailbox[Query]; x: int): int {.cps: Query.} =
   ## the "client"
   setupQueryWith x
-  echo "asking " & $x & " in " & $getThreadId()
-  comeFrom mailbox
-  #goto mailbox
-  echo "recover " & $x & " in " & $getThreadId()
+  #echo "asking " & $x & " in " & $getThreadId()
+  goto mailbox
+  #echo "recover " & $x & " in " & $getThreadId()
   result = value()
 
 proc rz(a: Oracle; b: Query): Oracle {.cpsMagic.} =
@@ -58,17 +57,16 @@ proc application(home: Mailbox[Continuation]) {.cps: Continuation.} =
   var mail = newMailbox[Query]()
   var pool = newPool[Oracle, Query](SmartService, mail)
 
-  echo "home is ", getThreadId()
   # submit some questions, etc.
-  var i = 10
+  var i = 100
   while i > 0:
-    echo "result of ", i, " is ", ask(mail, i)
-    #discard ask(mail, i)
-    #goto home
+    #echo "result of ", i, " is ", ask(address, i)
+    discard ask(mail, i)
+    goto home
     dec i
 
   # go home and drain the pool
-  #goto home
+  goto home
   shutdown pool
   home.send nil.Continuation
 
