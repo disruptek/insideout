@@ -41,18 +41,23 @@ const
 
 type
   ComeFrom = ref object of Continuation
-    returnTo: Mailbox[Continuation]
+    reply: Mailbox[Continuation]
 
 proc landing(c: sink Continuation): Continuation =
-  (ComeFrom c).returnTo.send(move c.mom)
+  (ComeFrom c).reply.send(move c.mom)
 
-proc waiting(reply: Mailbox[Continuation]) {.cps: Continuation.} =
-  discard trampoline(recv reply)
+proc unwrap(c: Continuation; b: sink Continuation): Continuation {.cpsMagic.} =
+  result = b
+
+proc waitfor(reply: Mailbox[Continuation]) {.cps: Continuation.} =
+  unwrap:
+    recv:
+      reply
 
 proc comeFrom*[T](c: var T; into: Mailbox[T]): Continuation {.cpsMagic.} =
   ## move the continuation to the given mailbox; control
   ## resumes in the current thread when successful
   var reply = newMailbox[Continuation](1)
-  c.mom = ComeFrom(fn: landing, mom: move c.mom, returnTo: reply)
+  c.mom = ComeFrom(fn: landing, mom: move c.mom, reply: reply)
   into.send(T move c)
-  result = whelp waiting(reply)
+  result = whelp waitfor(reply)

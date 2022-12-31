@@ -21,7 +21,6 @@ proc ask(mailbox: Mailbox[Query]; x: int): int {.cps: Query.} =
   setupQueryWith x
   echo "asking " & $x & " in " & $getThreadId()
   comeFrom mailbox
-  #goto mailbox
   echo "recover " & $x & " in " & $getThreadId()
   result = value()
 
@@ -53,36 +52,26 @@ proc oracle(mailbox: Mailbox[Query]) {.cps: Oracle.} =
 # define a service using a continuation bootstrap
 const SmartService = whelp oracle
 
-proc application(home: Mailbox[Continuation]) {.cps: Continuation.} =
+proc application(): int {.cps: Continuation.} =
   # create a child service
   var mail = newMailbox[Query]()
   var pool = newPool[Oracle, Query](SmartService, mail)
+  let home = getThreadId()
 
-  echo "home is ", getThreadId()
+  var c {.cps.} = continuation()
   # submit some questions, etc.
   var i = 10
   while i > 0:
-    echo "result of ", i, " is ", ask(mail, i)
-    #discard ask(mail, i)
-    #goto home
+    result = ask(mail, i)
     dec i
 
-  # go home and drain the pool
-  #goto home
-  shutdown pool
-  home.send nil.Continuation
+  # we're still at home
+  doAssert home == getThreadId()
 
 proc main =
-  echo "\n\n\n"
-  block:
-    var home = newMailbox[Continuation]()
-    var c = Continuation: whelp application(home)
-    while not c.dismissed:
-      discard trampoline(move c)
-      doAssert c.isNil
-      c = recv home
-    echo "application complete"
-  echo "program exit"
+  let was = application()
+  doAssert was == 1025, "result was " & $was & " and not 1025"
+  echo "application complete"
 
 when isMainModule:
   main()
