@@ -19,7 +19,9 @@ proc `=destroy`*[T](arc: var AtomicRef[T]) {.inline.} =
     if 0 == fetchSub(arc.reference.rc, 1, moAcquire):
       `=destroy`(arc.reference[])
       deallocShared arc.reference
-    arc.reference = nil
+      arc.reference = nil
+    else:
+      arc.reference = nil
 
 proc `=copy`*[T](dest: var AtomicRef[T]; src: AtomicRef[T]) {.inline.} =
   mixin `=destroy`
