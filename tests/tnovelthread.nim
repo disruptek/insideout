@@ -13,11 +13,21 @@ proc value(c: Query): int {.cpsVoodoo.} = c.y
 
 proc ask(x: int): int {.cps: Query.} =
   ## the "client"
-  setupQueryWith x
-  echo "asking " & $x & " in " & $getThreadId()
-  novelThread[Query]()
-  result = x + value()
-  echo "recover " & $x & " in " & $getThreadId(), " as ", result
+  when compiles(continuation()):
+    # cps inspector
+    var c {.cps: [Query].} = continuation()
+    echo "asking " & $x & " in " & $getThreadId()
+    novelThread[Query]()
+    c.y = x * 2
+    result = x + c.y
+    echo "recover " & $x & " in " & $getThreadId(), " as ", result
+  else:
+    # no cps inspector :-(
+    setupQueryWith x
+    echo "asking " & $x & " in " & $getThreadId()
+    novelThread[Query]()
+    result = x + value()
+    echo "recover " & $x & " in " & $getThreadId(), " as ", result
 
 proc application(): int {.cps: Continuation.} =
   let home = getThreadId()
