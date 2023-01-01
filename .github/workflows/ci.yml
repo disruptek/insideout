@@ -72,8 +72,8 @@ jobs:
         run: |
           cd project
           nimble --accept develop
-          nimble --accept install "https://github.com/disruptek/balls@#4.0.8"
-          balls --backend:c --mm:arc
+          nimble --accept install "https://github.com/disruptek/balls"
+          balls --backend:c --mm:arc --mm:orc --define:useMalloc
 
 #      - name: Build docs
 #        shell: bash
