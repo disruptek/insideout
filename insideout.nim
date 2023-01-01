@@ -21,21 +21,6 @@ proc goto*[T](continuation: var T; where: Mailbox[T]): T {.cpsMagic.} =
   where.send message
   result = nil.T
 
-proc waitron(box: Mailbox[Continuation]) {.cps: Continuation.} =
-  ## generic blocking mailbox consumer
-  while true:
-    debug box, " recv"
-    var mail = recv box
-    debug box, " got mail"
-    if dismissed mail:
-      debug box, " dismissed"
-      break
-    else:
-      debug box, " run begin"
-      discard trampoline(move mail)
-      debug box, " run end"
-  debug box, " end"
-
 template createWaitron*(A: typedesc; B: typedesc): untyped =
   proc ron(box: Mailbox[B]) {.cps: A.} =
     ## generic blocking mailbox consumer
