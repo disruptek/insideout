@@ -22,7 +22,7 @@ proc goto*[T](continuation: var T; where: Mailbox[T]): T {.cpsMagic.} =
   result = nil.T
 
 template createWaitron*(A: typedesc; B: typedesc): untyped =
-  proc ron(box: Mailbox[B]) {.cps: A.} =
+  proc `waitron A to B`(box: Mailbox[B]) {.cps: A.} =
     ## generic blocking mailbox consumer
     while true:
       debug box, " recv"
@@ -36,7 +36,7 @@ template createWaitron*(A: typedesc; B: typedesc): untyped =
         discard trampoline(move mail)
         debug box, " run end"
     debug box, " end"
-  whelp ron
+  whelp `waitron A to B`
 
 const
   ContinuationWaiter* = createWaitron(Continuation, Continuation)
