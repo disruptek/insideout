@@ -6,7 +6,7 @@ import insideout/runtimes
 import insideout/mailboxes
 
 type
-  PoolNode[A, B] = SinglyLinkedNode[Runtime[A, B]]
+  PoolNode[A, B] {.used.} = SinglyLinkedNode[Runtime[A, B]]
   Pool*[A, B] = object  ## a collection of runtimes
     list: SinglyLinkedList[Runtime[A, B]]
   Factory[A, B] = proc(mailbox: Mailbox[B]) {.cps: A.}
