@@ -40,13 +40,9 @@ proc owners*[T](arc: AtomicRef[T]): int {.inline.} =
       raise Defect.newException "atomic ref underrun: " & $result
 
 proc new*[T](arc: var AtomicRef[T]) {.inline.} =
-  if arc.isNil:
-    arc.reference = cast[ptr Reference[T]](allocShared0(sizeof Reference[T]))
-    # NOTE: we cannot destroy/reset the arc.reference.value here because
-    #       it might contain a thread or mutex or condvar, etc.
-    #store(arc.reference.rc, 0)
-  else:
-    raise ValueError.newException "attempt to reinitialize atomic ref"
+  if not arc.isNil:
+    `=destroy`(arc)
+  arc.reference = cast[ptr Reference[T]](allocShared0(sizeof Reference[T]))
 
 converter dereference*[T](arc: AtomicRef[T]): var T {.inline.} =
   if arc.isNil:

@@ -40,8 +40,7 @@ proc main =
       check not runtime.isNil
       check runtime.owners == 1
       check runtime.state == Uninitialized
-      expect ValueError:
-        new runtime
+      new runtime
       check runtime.owners == 1
       var other = runtime
       check runtime.owners == 2
