@@ -112,6 +112,8 @@ proc dispatcher(work: Work) {.thread.} =
       discard trampoline work.factory.call(work.mailbox[])
   finally:
     store(work.runtime[].state, Stopping)
+    when defined(gcOrc):
+      GC_runOrc()
 
 template factory(runtime: var Runtime): untyped =
   runtime[].thread.data.factory
