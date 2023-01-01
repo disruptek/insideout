@@ -36,8 +36,25 @@ proc waitron(box: Mailbox[Continuation]) {.cps: Continuation.} =
       debug box, " run end"
   debug box, " end"
 
+template createWaitron*(A: typedesc; B: typedesc): untyped =
+  proc ron(box: Mailbox[B]) {.cps: A.} =
+    ## generic blocking mailbox consumer
+    while true:
+      debug box, " recv"
+      var mail = recv box
+      debug box, " got mail"
+      if dismissed mail:
+        debug box, " dismissed"
+        break
+      else:
+        debug box, " run begin"
+        discard trampoline(move mail)
+        debug box, " run end"
+    debug box, " end"
+  whelp ron
+
 const
-  ContinuationWaiter* = whelp waitron
+  ContinuationWaiter* = createWaitron(Continuation, Continuation)
 
 type
   ComeFrom = ref object of Continuation
