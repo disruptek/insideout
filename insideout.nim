@@ -73,3 +73,13 @@ proc comeFrom*[T](c: var T; into: Mailbox[T]): Continuation {.cpsMagic.} =
   c.mom = ComeFrom(fn: landing, mom: move c.mom, reply: reply)
   into.send(c)
   result = recv reply
+
+proc novelThread*[T](c: var T): T {.cpsMagic.} =
+  ## move to a new thread; control resumes
+  ## in the current thread when complete
+  ## NOTE: specifying [T] goes away if cps loses color
+  const Waiter = createWaitron(T, T)
+  var mailbox = newMailbox[T](1)
+  var runtime = spawn(Waiter, mailbox)
+  result = cast[T](comeFrom(c, mailbox))
+  quit runtime
