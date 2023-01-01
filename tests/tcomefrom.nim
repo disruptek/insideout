@@ -12,8 +12,6 @@ proc setupQueryWith(c: Query; y: int): Query {.cpsMagic.} =
   c.y = y
   result = c
 
-proc me(c: Oracle): Oracle {.cpsVoodoo.} = c
-
 proc value(c: Query): int {.cpsVoodoo.} = c.y
 
 proc ask(mailbox: Mailbox[Query]; x: int): int {.cps: Query.} =
@@ -58,7 +56,6 @@ proc application(): int {.cps: Continuation.} =
   var pool = newPool[Oracle, Query](SmartService, mail)
   let home = getThreadId()
 
-  var c {.cps.} = continuation()
   # submit some questions, etc.
   var i = 10
   while i > 0:

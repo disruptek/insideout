@@ -49,7 +49,10 @@ proc landing(c: sink Continuation): Continuation =
 proc comeFrom*[T](c: var T; into: Mailbox[T]): Continuation {.cpsMagic.} =
   ## move the continuation to the given mailbox; control
   ## resumes in the current thread when successful
+
+  # NOTE: the mom, which is Continuation, defines the reply mailbox type;
+  #       thus, the return value of comeFrom()
   var reply = newMailbox[Continuation](1)
   c.mom = ComeFrom(fn: landing, mom: move c.mom, reply: reply)
-  into.send(T move c)
+  into.send(c)
   result = recv reply
