@@ -46,7 +46,7 @@ type
     reply: Mailbox[Continuation]
 
 proc landing(c: sink Continuation): Continuation =
-  (ComeFrom c).reply.send(move c.mom)
+  goto(c.mom, (ComeFrom c).reply)
 
 proc comeFrom*[T](c: var T; into: Mailbox[T]): Continuation {.cpsMagic.} =
   ## move the continuation to the given mailbox; control
@@ -56,7 +56,7 @@ proc comeFrom*[T](c: var T; into: Mailbox[T]): Continuation {.cpsMagic.} =
   #       thus, the return value of comeFrom()
   var reply = newMailbox[Continuation](1)
   c.mom = ComeFrom(fn: landing, mom: move c.mom, reply: reply)
-  into.send(c)
+  discard goto(c, into)
   result = recv reply
 
 proc novelThread*[T](c: var T): T {.cpsMagic.} =
