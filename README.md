@@ -10,7 +10,7 @@ This is an experimental concurrency library.
 
 ## Documentation
 
-See [the documentation for the insideout module](https://disruptek.github.io/insideout/insideout.html) as generated directly from the source.
+Nim's documentation generator breaks when attempting to read insideout.
 
 ## License
 MIT
