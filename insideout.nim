@@ -1,3 +1,6 @@
+when (NimMajor, NimMinor) < (1, 7):
+  {.error: "insideout requires nim >= 1.7".}
+
 import pkg/cps
 
 import insideout/pools
