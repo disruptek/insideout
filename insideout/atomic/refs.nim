@@ -16,7 +16,7 @@ proc isNil*[T](arc: AtomicRef[T]): bool {.inline.} =
 proc `=destroy`*[T](arc: var AtomicRef[T]) {.inline.} =
   mixin `=destroy`
   if not arc.isNil:
-    if 0 == fetchSub(arc.reference.rc, 1):
+    if 0 == fetchSub(arc.reference[].rc, 1):
       `=destroy`(arc.reference[])
       deallocShared arc.reference
       arc.reference = nil
@@ -44,12 +44,6 @@ proc new*[T](arc: var AtomicRef[T]) {.inline.} =
     `=destroy`(arc)
   arc.reference = cast[ptr Reference[T]](allocShared0(sizeof Reference[T]))
 
-converter dereference*[T](arc: AtomicRef[T]): var T {.inline.} =
-  if arc.isNil:
-    raise Defect.newException "dereference of nil atomic ref " & $T
-  else:
-    result = arc.reference[].value
-
 proc `[]`*[T](arc: AtomicRef[T]): var T {.inline.} =
   if arc.isNil:
     raise Defect.newException "dereference of nil atomic ref " & $T
@@ -58,3 +52,5 @@ proc `[]`*[T](arc: AtomicRef[T]): var T {.inline.} =
 
 proc address*(arc: AtomicRef): pointer {.inline.} =
   arc.reference
+
+converter dereference*[T](arc: AtomicRef[T]): var T {.inline.} = arc[]
