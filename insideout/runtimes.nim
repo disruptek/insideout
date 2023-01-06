@@ -74,8 +74,8 @@ proc join(runtime: var RuntimeObj): int {.inline.} =
     while status == Launching:
       status = state runtime
     if status < Stopped:
-      let value = cast[pointer](addr runtime.result)
-      result = pthreadJoin(runtime.thread.sys, addr value)
+      var value = cast[pointer](addr runtime.result)  # var for nim-1.6
+      result = pthreadJoin(runtime.thread.handle(), addr value)
       store(runtime.state, Stopped)
 
 proc join*(runtime: var Runtime): int {.discardable, inline.} =

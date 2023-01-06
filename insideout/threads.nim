@@ -1,4 +1,10 @@
-from std/private/threadtypes import pthreadh, SysThread, PthreadAttr
+when (NimMajor, NimMinor) > (1, 6):
+  from std/private/threadtypes import pthreadh, SysThread, PthreadAttr
+else:
+  type
+    PthreadAttr* {.byref, importc: "pthread_attr_t", header: "<sys/types.h>".} = object
+  const
+    pthreadh* = "#define _GNU_SOURCE\n#include <pthread.h>"
 
 proc pthread_kill*(thread: SysThread; signal: cint)
   {.importc, header: pthreadh.}
