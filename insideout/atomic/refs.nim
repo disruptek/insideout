@@ -43,6 +43,8 @@ proc new*[T](arc: var AtomicRef[T]) {.inline.} =
   if not arc.isNil:
     `=destroy`(arc)
   arc.reference = cast[ptr Reference[T]](allocShared0(sizeof Reference[T]))
+  if arc.reference.isNil:
+    raise Defect.newException "unable to alloc memory for AtomicRef"
 
 proc `[]`*[T](arc: AtomicRef[T]): var T {.inline.} =
   if arc.isNil:
