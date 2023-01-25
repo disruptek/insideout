@@ -1,6 +1,9 @@
 when (NimMajor, NimMinor) < (1, 7):
   {.error: "insideout requires nim >= 1.7".}
 
+import std/genasts
+import std/macros
+
 import pkg/cps
 
 import insideout/pools
@@ -12,7 +15,7 @@ export mailboxes
 export runtimes
 
 template debug(arguments: varargs[untyped, `$`]): untyped =
-  when not defined(release):
+  when not defined(release) and not defined(nimDoc):
     echo arguments
 
 proc goto*[T](continuation: var T; where: Mailbox[T]): T {.cpsMagic.} =
@@ -24,22 +27,29 @@ proc goto*[T](continuation: var T; where: Mailbox[T]): T {.cpsMagic.} =
   where.send message
   result = nil.T
 
-template createWaitron*(A: typedesc; B: typedesc): untyped =
-  proc `waitron A to B`(box: Mailbox[B]) {.cps: A.} =
-    ## generic blocking mailbox consumer
-    while true:
-      debug box, " recv"
-      var mail = recv box
-      debug box, " got mail"
-      if dismissed mail:
-        debug box, " dismissed"
-        break
-      else:
-        debug box, " run begin"
-        discard trampoline(move mail)
-        debug box, " run end"
-    debug box, " end"
-  whelp `waitron A to B`
+macro createWaitron*(A: typedesc; B: typedesc): untyped =
+  ## The compiler really hates when you do this one thing;
+  ## but they cannot stop you!
+  let name =
+    nskProc.genSym:
+      "waitron " & repr(A) & " to " & repr(B)
+  name.copyLineInfo(A)
+  genAstOpt({}, name, A, B):
+    proc name(box: Mailbox[B]) {.cps: A.} =
+      ## generic blocking mailbox consumer
+      while true:
+        debug box, " recv"
+        var mail = recv box
+        debug box, " got mail"
+        if dismissed mail:
+          debug box, " dismissed"
+          break
+        else:
+          debug box, " run begin"
+          discard trampoline(move mail)
+          debug box, " run end"
+      debug box, " end"
+    whelp name
 
 const
   ContinuationWaiter* = createWaitron(Continuation, Continuation)
