@@ -16,6 +16,10 @@ proc pthread_create*(a1: var SysThread, a2: var Pthread_attr,
   {.importc, header: pthreadh.}
 proc pthread_cancel*(thread: SysThread): cint
   {.importc, header: pthreadh.}
+proc pthread_setcancelstate*(state: cint; oldstate: ptr cint): cint
+  {.importc, header: pthreadh.}
+proc pthread_setcanceltype*(tipe: cint; oldtipe: ptr cint): cint
+  {.importc, header: pthreadh.}
 proc pthread_attr_init*(a1: var Pthread_attr): cint
   {.importc, header: pthreadh.}
 proc pthread_attr_setstack*(a1: ptr Pthread_attr, a2: pointer, a3: int): cint

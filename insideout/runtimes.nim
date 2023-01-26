@@ -1,5 +1,7 @@
 import std/atomics
 import std/hashes
+import std/locks
+import std/posix
 import std/strutils
 
 import pkg/cps
@@ -28,7 +30,8 @@ type
   RuntimeObj[A, B] = object
     mailbox: Mailbox[B]
     thread: Thread[Work[A, B]]
-    state: Atomic[RuntimeState]
+    status: Atomic[RuntimeState]
+    change: Cond
     result: cint
 
   Runtime*[A, B] = AtomicRef[RuntimeObj[A, B]]
@@ -39,17 +42,31 @@ proc `=copy`*[A, B](runtime: var RuntimeObj[A, B]; other: RuntimeObj[A, B]) {.er
   discard
 
 proc state(runtime: var RuntimeObj): RuntimeState =
-  load(runtime.state)
+  load(runtime.status)
+
+proc `state=`*(runtime: var RuntimeObj; state: RuntimeState) =
+  case state
+  of Uninitialized:
+    raise ValueError.newException:
+      "attempt to assign Uninitialized state"
+  else:
+    template weakExchange(boolean: bool): bool = boolean
+    var prior: RuntimeState
+    while prior < state:
+      if compareExchange(runtime.status, prior, state,
+                         order = moSequentiallyConsistent):
+        broadcast runtime.change
+        break
 
 proc state*(runtime: Runtime): RuntimeState =
   if runtime.isNil:
     Uninitialized
   else:
-    state runtime[]
+    runtime[].state
 
 proc ran*[A, B](runtime: var Runtime[A, B]): bool =
   ## true if the runtime has run
-  state(runtime) >= Launching
+  runtime.state >= Launching
 
 proc hash*(runtime: Runtime): Hash =
   ## whatfer inclusion in a table, etc.
@@ -67,6 +84,14 @@ proc `==`*(a, b: Runtime): bool =
   mixin hash
   hash(a) == hash(b)
 
+proc init(runtime: var RuntimeObj) {.inline.} =
+  initCond runtime.change
+
+proc init(runtime: var Runtime) {.inline.} =
+  if runtime.isNil:
+    new runtime
+  init runtime[]
+
 proc join(runtime: var RuntimeObj): int {.inline.} =
   var status = state runtime
   if status >= Launching:
@@ -75,8 +100,8 @@ proc join(runtime: var RuntimeObj): int {.inline.} =
       status = state runtime
     if status < Stopped:
       var value = cast[pointer](addr runtime.result)  # var for nim-1.6
-      result = pthreadJoin(runtime.thread.handle(), addr value)
-      store(runtime.state, Stopped)
+      result = pthread_join(runtime.thread.handle(), addr value)
+      runtime.state = Stopped
 
 proc join*(runtime: var Runtime): int {.discardable, inline.} =
   ## wait for a running runtime to stop running;
@@ -100,20 +125,51 @@ template assertReady(work: Work): untyped =
       raise ValueError.newException "mailbox uninitialized"
     elif work.runtime.isNil:
       raise ValueError.newException "unbound to thread"
-    elif load(work.runtime[].state) > Launching:
+    elif work.runtime[].state > Launching:
       raise ValueError.newException "already launched"
+
+proc renderError(e: ref Exception): string =
+  result.add e.name
+  result.add ": "
+  result.add e.msg
 
 proc dispatcher(work: Work) {.thread.} =
   ## thread-local continuation dispatch
-  assertReady work
-  store(work.runtime[].state, Running)
-  try:
-    {.cast(gcsafe).}:
-      discard trampoline work.factory.call(work.mailbox[])
-  finally:
-    store(work.runtime[].state, Stopping)
-    when defined(gcOrc):
-      GC_runOrc()
+  while true:
+    case work.runtime[].state
+    of Uninitialized:
+      work.runtime[].state = Launching  # uh... okay
+    of Launching:
+      var attempt, prior: cint
+      if attempt == 0:
+        attempt = pthread_setcancelstate(PTHREAD_CANCEL_DISABLE.cint, addr prior)
+      if attempt == 0:
+        attempt = pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED.cint, addr prior)
+      work.runtime[].state =
+        if attempt == 0:
+          Running
+        else:
+          work.runtime[].result = attempt
+          Stopping
+    of Running:
+      {.cast(gcsafe).}:
+        try:
+          discard trampoline work.factory.call(work.mailbox[])
+        except CatchableError as e:
+          stdmsg().writeLine:
+            renderError e
+          work.runtime[].result =
+            if errno == 0:
+              1
+            else:
+              errno
+      work.runtime[].state = Stopping
+    of Stopping:
+      when defined(gcOrc):
+        GC_runOrc()
+      break
+    of Stopped:
+      break
 
 template factory(runtime: var Runtime): untyped =
   runtime[].thread.data.factory
@@ -131,7 +187,7 @@ proc spawn*[A, B](runtime: var Runtime[A, B]; mailbox: Mailbox[B]) =
     # XXX we assume that the runtime address begins with the runtime object
     runtime[].thread.data.runtime = addr runtime[]
     assertReady runtime[].thread.data
-    store(runtime[].state, Launching)
+    runtime[].state = Launching
     createThread(runtime[].thread, dispatcher, runtime[].thread.data)
 
 proc spawn*[A, B](runtime: var Runtime[A, B]): Mailbox[B] =
@@ -142,7 +198,7 @@ proc spawn*[A, B](runtime: var Runtime[A, B]): Mailbox[B] =
 proc spawn*[A, B](runtime: var Runtime[A, B]; factory: Factory[A, B]): Mailbox[B] =
   ## create compute from a factory and return new mailbox
   if runtime.isNil:
-    new runtime
+    init runtime
   elif not runtime.factory.fn.isNil and runtime.factory != factory:
     raise ValueError.newException "spawn/2: attempt to change runtime factory"
   runtime[].thread.data.factory = factory
@@ -151,7 +207,7 @@ proc spawn*[A, B](runtime: var Runtime[A, B]; factory: Factory[A, B]): Mailbox[B
 proc spawn*[A, B](runtime: var Runtime[A, B]; factory: Factory[A, B]; mailbox: Mailbox[B]) =
   ## create compute from a factory and existing mailbox
   if runtime.isNil:
-    new runtime
+    init runtime
   elif not runtime.factory.fn.isNil and runtime.factory != factory:
     raise ValueError.newException "spawn/3: attempt to change runtime factory"
   runtime[].thread.data.factory = factory
