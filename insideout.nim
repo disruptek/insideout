@@ -32,7 +32,7 @@ macro createWaitron*(A: typedesc; B: typedesc): untyped =
   ## but they cannot stop you!
   let name =
     nskProc.genSym:
-      "waitron " & repr(A) & " to " & repr(B)
+      "waitron " & repr(A) & " To " & repr(B)
   name.copyLineInfo(A)
   genAstOpt({}, name, A, B):
     proc name(box: Mailbox[B]) {.cps: A.} =
