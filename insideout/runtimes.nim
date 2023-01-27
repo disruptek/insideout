@@ -94,7 +94,6 @@ proc join(runtime: var RuntimeObj): int {.inline.} =
         "attempt to join uninitialized runtime"
     of Launching:
       discard  # spin
-      raise
     of Stopped:
       break
     else:
