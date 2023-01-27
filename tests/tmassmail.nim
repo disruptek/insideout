@@ -11,8 +11,9 @@ proc respond(mailbox: Mailbox[int]; x: int) {.cps: Continuation.} =
 proc application() {.cps: Continuation.} =
   var request = newMailbox[Continuation](N)
   var replies = newMailbox[int](N)
-  var pool = newPool[Continuation, Continuation](ContinuationWaiter, request,
-                                                 initialSize = countProcessors())
+  var pool {.used.} =
+    newPool[Continuation, Continuation](ContinuationWaiter, request,
+                                        initialSize = countProcessors())
   var i = N
   while i > 0:
     request.send:
