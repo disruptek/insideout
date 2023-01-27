@@ -14,13 +14,8 @@ export pools
 export mailboxes
 export runtimes
 
-template debug(arguments: varargs[untyped, `$`]): untyped =
-  when not defined(release) and not defined(nimDoc):
-    echo arguments
-
 proc goto*[T](continuation: var T; where: Mailbox[T]): T {.cpsMagic.} =
   ## move the current continuation to another compute domain
-  debug "goto ", where
   # we want to be sure that a future destroy finds nothing,
   # so we move the continuation and then send /that/ ref.
   var message = move continuation
@@ -38,17 +33,11 @@ macro createWaitron*(A: typedesc; B: typedesc): untyped =
     proc name(box: Mailbox[B]) {.cps: A.} =
       ## generic blocking mailbox consumer
       while true:
-        debug box, " recv"
         var mail = recv box
-        debug box, " got mail"
         if dismissed mail:
-          debug box, " dismissed"
           break
         else:
-          debug box, " run begin"
           discard trampoline(move mail)
-          debug box, " run end"
-      debug box, " end"
     whelp name
 
 const
