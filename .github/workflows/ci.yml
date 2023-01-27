@@ -73,7 +73,7 @@ jobs:
           cd project
           nimble --accept develop
           nimble --accept install "https://github.com/disruptek/balls"
-          balls --backend:c --backend:cpp --mm:arc --mm:orc --define:debug --define:release --define:danger
+          balls --path="." --backend:c --backend:cpp --mm:arc --mm:orc --define:debug --define:release --define:danger
 
 #      - name: Build docs
 #        shell: bash
