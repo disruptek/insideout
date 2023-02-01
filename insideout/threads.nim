@@ -28,3 +28,5 @@ proc pthread_attr_setstacksize*(a1: var Pthread_attr, a2: int): cint
   {.importc, header: pthreadh.}
 proc pthread_attr_destroy*(a1: var Pthread_attr): cint
   {.importc, header: pthreadh.}
+proc pthread_setname_np*(thread: SysThread; name: cstring): cint
+  {.importc, header: pthreadh.}
