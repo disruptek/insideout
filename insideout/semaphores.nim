@@ -109,17 +109,18 @@ template withSemaphore*(s: var Semaphore; logic: typed): untyped =
   finally:
     signal s
 
-template trySemaphore*(s: var Semaphore; logic: typed): untyped =
-  if tryAcquire s.lock:
-    if s.count > 0:
-      dec s.count
-      try:
-        logic
-      finally:
+macro trySemaphore*(s: var Semaphore; logic: typed): untyped =
+  genAstOpt({}, s, logic):
+    if tryAcquire s.lock:
+      if s.count > 0:
+        dec s.count
+        try:
+          logic
+        finally:
+          release s.lock
+        true
+      else:
         release s.lock
-      true
+        false
     else:
-      release s.lock
       false
-  else:
-    false
