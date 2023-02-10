@@ -1,5 +1,7 @@
 import std/atomics
 
+import insideout/valgrind
+
 type
   Reference[T] = object
     value: T
@@ -17,10 +19,13 @@ proc `=destroy`*[T](arc: var AtomicRef[T]) {.inline.} =
   mixin `=destroy`
   if not arc.isNil:
     if 0 == fetchSub(arc.reference[].rc, 1):
+      happensAfter(addr arc.reference[].rc)
+      happensBeforeForgetAll(addr arc.reference[].rc)
       `=destroy`(arc.reference[])
       deallocShared arc.reference
       arc.reference = nil
     else:
+      happensBefore(addr arc.reference[].rc)
       arc.reference = nil
 
 proc `=copy`*[T](dest: var AtomicRef[T]; src: AtomicRef[T]) {.inline.} =

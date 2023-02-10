@@ -3,7 +3,11 @@ import std/osproc
 import pkg/cps
 import pkg/insideout
 
-const N = 1_000_000
+let N =
+  if isUnderValgrind():
+    10_000
+  else:
+    1_000_000
 
 proc respond(mailbox: Mailbox[int]; x: int) {.cps: Continuation.} =
   mailbox.send(x)

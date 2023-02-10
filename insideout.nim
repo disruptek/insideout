@@ -9,10 +9,12 @@ import pkg/cps
 import insideout/pools
 import insideout/mailboxes
 import insideout/runtimes
+import insideout/valgrind
 
 export pools
 export mailboxes
 export runtimes
+export valgrind
 
 proc goto*[T](continuation: var T; where: Mailbox[T]): T {.cpsMagic.} =
   ## move the current continuation to another compute domain

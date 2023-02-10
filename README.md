@@ -12,5 +12,7 @@ This is an experimental concurrency library.
 
 Nim's documentation generator breaks when attempting to read insideout.
 
+Define `insideoutValgrind=on` to enable valgrind-specific annotations.
+
 ## License
 MIT
