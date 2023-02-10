@@ -65,6 +65,12 @@ proc wait*(s: var Semaphore) =
     consume
     release s.lock
 
+proc gate*(s: var Semaphore) =
+  ## blocking wait on `s`, followed by a signal
+  withLock s.lock:
+    wait(s.cond, s.lock)
+    signal(s.cond)
+
 proc available*(s: var Semaphore): int =
   ## blocking count of `s`
   withLock s.lock:
