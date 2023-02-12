@@ -161,7 +161,8 @@ proc dispatcher(work: Work) {.thread.} =
     of Running:
       {.cast(gcsafe).}:
         try:
-          trampolineIt work.factory.call(work.mailbox[]):
+          var c = work.factory.call(work.mailbox[])
+          trampolineIt c:
             sleepyMonkey()
         except CatchableError as e:
           stdmsg().writeLine:
