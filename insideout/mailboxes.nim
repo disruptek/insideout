@@ -83,11 +83,10 @@ proc recv*[T](mail: Mailbox[T]): T =
 proc tryRecv*[T](mail: Mailbox[T]; message: var T): bool =
   ## try to pop an item from the mailbox; true if it worked
   assertInitialized mail
-  result =
-    trySemaphore mail[].read:
-      withLock mail[].lock:
-        message = popFirst mail[].deck
+  result = tryWait mail[].read
   if result:
+    withLock mail[].lock:
+      message = popFirst mail[].deck
     signal mail[].write
 
 proc send*[T](mail: Mailbox[T]; message: sink T) =
@@ -95,19 +94,18 @@ proc send*[T](mail: Mailbox[T]; message: sink T) =
   assertInitialized mail
   wait mail[].write
   withLock mail[].lock:
-    mail[].deck.addLast:
+    addLast mail[].deck:
       move message
   signal mail[].read
 
 proc trySend*[T](mail: Mailbox[T]; message: var T): bool =
   ## try to push an item into the mailbox; true if it worked
   assertInitialized mail
-  result =
-    trySemaphore mail[].write:
-      withLock mail[].lock:
-        mail[].deck.addLast:
-          move message
+  result = tryWait mail[].write
   if result:
+    withLock mail[].lock:
+      addLast mail[].deck:
+        move message
     signal mail[].read
 
 proc tryMoveMail*[T](a, b: Mailbox[T]) =
