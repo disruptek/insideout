@@ -11,7 +11,7 @@ proc main() =
 
   # a thread pool that consumes the mailbox
   # using a generic Continuation running service
-  let pool = newPool(ContinuationWaiter, remote)
+  let pool {.used.} = newPool(ContinuationWaiter, remote)
 
   # run a new Continuation somewhere else
   remote.send:
