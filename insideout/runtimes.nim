@@ -135,6 +135,19 @@ proc renderError(e: ref Exception): string =
   result.add ": "
   result.add e.msg
 
+const
+  insideoutSleepyMonkey* {.intdefine.} = 0
+
+when insideoutSleepyMonkey == 0:
+  template sleepyMonkey(): untyped = discard
+else:
+  import std/random
+
+  var r {.threadvar.}: Rand
+  r = initRand()
+  proc sleepyMonkey() =
+    discard usleep(Useconds(r.rand insideoutSleepyMonkey))
+
 proc dispatcher(work: Work) {.thread.} =
   ## thread-local continuation dispatch
   while true:
@@ -157,7 +170,8 @@ proc dispatcher(work: Work) {.thread.} =
     of Running:
       {.cast(gcsafe).}:
         try:
-          discard trampoline work.factory.call(work.mailbox[])
+          trampolineIt work.factory.call(work.mailbox[]):
+            sleepyMonkey()
         except CatchableError as e:
           stdmsg().writeLine:
             renderError e
