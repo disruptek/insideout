@@ -78,7 +78,7 @@ jobs:
                 --backend:c --backend:cpp \
                 --mm:arc --mm:orc \
                 --define:debug --define:release --define:danger \
-                --define:insideoutValgrind=on --define:insideoutSleepyMonkey=1
+                --define:insideoutValgrind=on --define:insideoutSleepyMonkey=100
 
 #      - name: Build docs
 #        shell: bash
