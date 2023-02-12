@@ -191,13 +191,16 @@ proc dispatcher(work: Work) {.thread.} =
 template factory(runtime: var Runtime): untyped =
   runtime[].thread.data.factory
 
-proc spawn*[A, B](runtime: var Runtime[A, B]; mailbox: Mailbox[B]) =
+proc spawn*[A, B](runtime: var Runtime[A, B]; factory: Factory[A, B]; mailbox: Mailbox[B]) =
   ## add compute to mailbox
   if runtime.isNil:
     raise ValueError.newException "runtime is not initialized"
   elif not runtime[].mailbox.isNil and runtime[].mailbox != mailbox:
-    raise ValueError.newException "attempt to change runtime mailbox"
+    raise ValueError.newException "spawn/3: attempt to change runtime mailbox"
+  elif not runtime.factory.fn.isNil and runtime.factory != factory:
+    raise ValueError.newException "spawn/3: attempt to change runtime factory"
   else:
+    runtime[].thread.data.factory = factory
     runtime[].mailbox = mailbox
     # XXX we assume that the runtime outlives the thread
     runtime[].thread.data.mailbox = addr runtime[].mailbox
@@ -206,34 +209,6 @@ proc spawn*[A, B](runtime: var Runtime[A, B]; mailbox: Mailbox[B]) =
     assertReady runtime[].thread.data
     runtime[].setState(Launching)
     createThread(runtime[].thread, dispatcher, runtime[].thread.data)
-
-proc spawn*[A, B](runtime: var Runtime[A, B]): Mailbox[B] =
-  ## add compute and return new mailbox
-  result = newMailbox[B]()
-  spawn(runtime, result)
-
-proc spawn*[A, B](runtime: var Runtime[A, B]; factory: Factory[A, B]): Mailbox[B] =
-  ## create compute from a factory and return new mailbox
-  if runtime.isNil:
-    new runtime
-  elif not runtime.factory.fn.isNil and runtime.factory != factory:
-    raise ValueError.newException "spawn/2: attempt to change runtime factory"
-  runtime[].thread.data.factory = factory
-  result = spawn(runtime)
-
-proc spawn*[A, B](runtime: var Runtime[A, B]; factory: Factory[A, B]; mailbox: Mailbox[B]) =
-  ## create compute from a factory and existing mailbox
-  if runtime.isNil:
-    new runtime
-  elif not runtime.factory.fn.isNil and runtime.factory != factory:
-    raise ValueError.newException "spawn/3: attempt to change runtime factory"
-  runtime[].thread.data.factory = factory
-  spawn(runtime, mailbox)
-
-proc spawn*[A, B](factory: Factory[A, B]): Runtime[A, B] =
-  ## create compute from a factory
-  new result
-  discard spawn(result, factory)
 
 proc spawn*[A, B](factory: Factory[A, B]; mailbox: Mailbox[B]): Runtime[A, B] =
   ## create compute from a factory and mailbox

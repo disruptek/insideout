@@ -49,7 +49,11 @@ proc main =
       check not other.ran
       check not runtime.ran
       check other == runtime
-      let mail = runtime.spawn(Service)
+    block:
+      ## run some time
+      let mail = newMailbox[RS]()
+      runtime = Service.spawn(mail)
+      var other = runtime
       sleep 50
       check other.state == Running
       pinToCpu(other, 0)
