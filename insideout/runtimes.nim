@@ -139,8 +139,9 @@ proc renderError(e: ref Exception): string =
   result.add ": "
   result.add e.msg
 
-proc dispatcher(work: Work) {.thread.} =
+proc dispatcher[A, B](work: Work[A, B]) {.thread.} =
   ## thread-local continuation dispatch
+  const name: cstring = $A
   while true:
     case work.runtime[].state
     of Uninitialized:
@@ -152,6 +153,8 @@ proc dispatcher(work: Work) {.thread.} =
         attempt = pthread_setcancelstate(PTHREAD_CANCEL_DISABLE.cint, addr prior)
       if attempt == 0:
         attempt = pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED.cint, addr prior)
+      if attempt == 0:
+        attempt = pthread_setname_np(work.runtime[].thread.handle(), name)
       work.runtime[].result = attempt
       work.runtime[].setState:
         if work.runtime[].result == 0:
