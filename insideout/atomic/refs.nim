@@ -1,6 +1,7 @@
 import std/atomics
 
 import insideout/valgrind
+import insideout/monkeys
 
 type
   Reference[T] = object
@@ -18,28 +19,35 @@ proc isNil*[T](arc: AtomicRef[T]): bool {.inline.} =
 proc `=destroy`*[T](arc: var AtomicRef[T]) {.inline.} =
   mixin `=destroy`
   if not arc.isNil:
+    sleepyMonkey()
     if 0 == fetchSub(arc.reference[].rc, 1):
       happensAfter(addr arc.reference[].rc)
       happensBeforeForgetAll(addr arc.reference[].rc)
       `=destroy`(arc.reference[])
+      sleepyMonkey()
       deallocShared arc.reference
+      sleepyMonkey()
       arc.reference = nil
     else:
       happensBefore(addr arc.reference[].rc)
+      sleepyMonkey()
       arc.reference = nil
 
 proc `=copy`*[T](dest: var AtomicRef[T]; src: AtomicRef[T]) {.inline.} =
   mixin `=destroy`
   if not src.isNil:
+    sleepyMonkey()
     discard fetchAdd(src.reference.rc, 1)
   if not dest.isNil:
     `=destroy`(dest)
+  sleepyMonkey()
   dest.reference = src.reference
 
 proc owners*[T](arc: AtomicRef[T]): int {.inline.} =
   ## returns the number of owners; this value is positive for
   ## initialized references and zero for all others
   if not arc.isNil:
+    sleepyMonkey()
     result = load(arc.reference.rc) + 1
     if result <= 0:
       raise Defect.newException "atomic ref underrun: " & $result
@@ -55,6 +63,7 @@ proc `[]`*[T](arc: AtomicRef[T]): var T {.inline.} =
   if arc.isNil:
     raise Defect.newException "dereference of nil atomic ref " & $T
   else:
+    sleepyMonkey()
     result = arc.reference[].value
 
 proc address*(arc: AtomicRef): pointer {.inline.} =

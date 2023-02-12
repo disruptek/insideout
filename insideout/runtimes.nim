@@ -11,6 +11,7 @@ export refs
 
 import insideout/mailboxes
 import insideout/threads
+import insideout/monkeys
 
 type
   Factory[A, B] = proc(mailbox: Mailbox[B]) {.cps: A.}
@@ -42,6 +43,7 @@ proc `=copy`*[A, B](runtime: var RuntimeObj[A, B]; other: RuntimeObj[A, B]) {.er
   discard
 
 proc state(runtime: var RuntimeObj): RuntimeState =
+  sleepyMonkey()
   load(runtime.status)
 
 proc setState(runtime: var RuntimeObj; value: RuntimeState) =
@@ -52,11 +54,13 @@ proc setState(runtime: var RuntimeObj; value: RuntimeState) =
   else:
     var prior: RuntimeState = Uninitialized
     while prior < value:
+      sleepyMonkey()
       if compareExchange(runtime.status, prior, value,
                          order = moSequentiallyConsistent):
         if prior == Uninitialized:
           initCond runtime.change
         else:
+          sleepyMonkey()
           broadcast runtime.change
         break
 
@@ -134,19 +138,6 @@ proc renderError(e: ref Exception): string =
   result.add e.name
   result.add ": "
   result.add e.msg
-
-const
-  insideoutSleepyMonkey* {.intdefine.} = 0
-
-when insideoutSleepyMonkey == 0:
-  template sleepyMonkey(): untyped = discard
-else:
-  import std/random
-
-  var r {.threadvar.}: Rand
-  r = initRand()
-  proc sleepyMonkey() =
-    discard usleep(Useconds(r.rand insideoutSleepyMonkey))
 
 proc dispatcher(work: Work) {.thread.} =
   ## thread-local continuation dispatch

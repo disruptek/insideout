@@ -2,12 +2,13 @@ import std/osproc
 
 import pkg/cps
 import pkg/insideout
+import pkg/insideout/monkeys
 
-let N =
-  if isUnderValgrind():
-    10_000
-  else:
-    1_000_000
+var N = 1_000_000
+if isUnderValgrind():
+  N = N div 100
+if insideoutSleepyMonkey > 0:
+  N = N div 100
 
 proc respond(mailbox: Mailbox[int]; x: int) {.cps: Continuation.} =
   mailbox.send(x)

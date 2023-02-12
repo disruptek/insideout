@@ -3,6 +3,7 @@ import std/hashes
 import std/locks
 import std/strutils
 
+import insideout/monkeys
 import insideout/semaphores
 import insideout/atomic/refs
 export refs
@@ -76,7 +77,9 @@ proc recv*[T](mail: Mailbox[T]): T =
   ## pop an item from the mailbox
   assertInitialized mail
   wait mail[].read
+  sleepyMonkey()
   withLock mail[].lock:
+    sleepyMonkey()
     result = popFirst mail[].deck
   signal mail[].write
 
@@ -85,7 +88,9 @@ proc tryRecv*[T](mail: Mailbox[T]; message: var T): bool =
   assertInitialized mail
   result = tryWait mail[].read
   if result:
+    sleepyMonkey()
     withLock mail[].lock:
+      sleepyMonkey()
       message = popFirst mail[].deck
     signal mail[].write
 
@@ -93,7 +98,9 @@ proc send*[T](mail: Mailbox[T]; message: sink T) =
   ## push an item into the mailbox
   assertInitialized mail
   wait mail[].write
+  sleepyMonkey()
   withLock mail[].lock:
+    sleepyMonkey()
     addLast mail[].deck:
       move message
   signal mail[].read
@@ -103,7 +110,9 @@ proc trySend*[T](mail: Mailbox[T]; message: var T): bool =
   assertInitialized mail
   result = tryWait mail[].write
   if result:
+    sleepyMonkey()
     withLock mail[].lock:
+      sleepyMonkey()
       addLast mail[].deck:
         move message
     signal mail[].read
@@ -115,3 +124,17 @@ proc tryMoveMail*[T](a, b: Mailbox[T]) =
     while a.tryRecv(item):
       if not b.trySend(item):
         break complete
+
+proc moveMail*[T](a, b: Mailbox[T]) =
+  ## move items from mailbox `a` into mailbox `b`
+  assertInitialized a
+  var item: T
+  while true:
+    sleepyMonkey()
+    withLock a[].lock:
+      sleepyMonkey()
+      if a[].deck.len == 0:
+        break
+      else:
+        item = popFirst a[].deck
+    b.send(item)

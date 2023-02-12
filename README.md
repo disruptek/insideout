@@ -13,7 +13,7 @@ This is an experimental concurrency library.
 Nim's documentation generator breaks when attempting to read insideout.
 
 Define `insideoutValgrind=on` to enable valgrind-specific annotations.
-Define `insideoutSleepyMonkey=N` to usleep N µs between continuation legs.
+Define `insideoutSleepyMonkey=N` to nanosleep `N`ns disruptively.
 
 ## License
 MIT

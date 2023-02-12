@@ -1,6 +1,8 @@
 import std/genasts
 import std/locks
 
+import insideout/monkeys
+
 type
   Semaphore* = object
     lock: Lock
@@ -26,10 +28,12 @@ proc `=copy`*(s: var Semaphore; e: Semaphore)
 macro withLock*(s: var Semaphore; logic: typed) =
   ## run the `logic` while holding the Semaphore `s`'s lock
   genAstOpt({}, s, logic):
+    sleepyMonkey()
     acquire s.lock
     try:
       logic
     finally:
+      sleepyMonkey()
       release s.lock
 
 proc signal*(s: var Semaphore) =
@@ -38,6 +42,7 @@ proc signal*(s: var Semaphore) =
     inc s.count
     # FIXME: move this out eventually
     # here because of drd?  --report-signal-unlocked=no
+    sleepyMonkey()
     signal s.cond
 
 proc wait*(s: var Semaphore) =
@@ -45,19 +50,25 @@ proc wait*(s: var Semaphore) =
   template consume {.dirty.} =
     if s.count > 0:
       dec s.count
+      sleepyMonkey()
       release s.lock
       break
   while true:
+    sleepyMonkey()
     acquire s.lock
     consume  # fast path
+    sleepyMonkey()
     wait(s.cond, s.lock)
     consume  # slow path
+    sleepyMonkey()
     release s.lock
 
 proc gate*(s: var Semaphore) =
   ## blocking wait on `s`, followed by a signal
   withLock s:
+    sleepyMonkey()
     wait(s.cond, s.lock)
+    sleepyMonkey()
     signal s.cond
 
 proc available*(s: var Semaphore): int =
@@ -86,12 +97,15 @@ template withSemaphore*(s: var Semaphore; logic: typed): untyped =
 macro tryWait*(s: var Semaphore): bool =
   ## Non-blocking wait which returns true if successful.
   genAstOpt({}, s):
+    sleepyMonkey()
     if tryAcquire s.lock:
       if s.count > 0:
         dec s.count
+        sleepyMonkey()
         release s.lock
         true
       else:
+        sleepyMonkey()
         release s.lock
         false
     else:
