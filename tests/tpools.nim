@@ -12,8 +12,6 @@ proc setupQueryWith(c: Query; y: int): Query {.cpsMagic.} =
   c.y = y
   result = c
 
-proc me(c: Oracle): Oracle {.cpsVoodoo.} = c
-
 proc value(c: Query): int {.cpsVoodoo.} = c.y
 
 proc ask(mailbox: Mailbox[Query]; x: int): int {.cps: Query.} =
@@ -55,7 +53,7 @@ const SmartService = whelp oracle
 proc application(home: Mailbox[Continuation]) {.cps: Continuation.} =
   # create a child service
   var mail = newMailbox[Query]()
-  var pool = newPool[Oracle, Query](SmartService, mail)
+  var pool {.used.} = newPool[Oracle, Query](SmartService, mail)
 
   # submit some questions, etc.
   var i = 100
@@ -67,7 +65,6 @@ proc application(home: Mailbox[Continuation]) {.cps: Continuation.} =
 
   # go home and drain the pool
   goto home
-  shutdown pool
   home.send nil.Continuation
 
 proc main =

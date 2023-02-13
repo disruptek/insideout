@@ -30,11 +30,12 @@ macro withLock*(s: var Semaphore; logic: typed) =
   genAstOpt({}, s, logic):
     sleepyMonkey()
     acquire s.lock
-    try:
-      logic
-    finally:
-      sleepyMonkey()
-      release s.lock
+    {.locks: [s.lock].}:
+      try:
+        logic
+      finally:
+        sleepyMonkey()
+        release s.lock
 
 proc signal*(s: var Semaphore) =
   ## blocking signal of `s`; increments Semaphore
@@ -56,12 +57,13 @@ proc wait*(s: var Semaphore) =
   while true:
     sleepyMonkey()
     acquire s.lock
-    consume  # fast path
-    sleepyMonkey()
-    wait(s.cond, s.lock)
-    consume  # slow path
-    sleepyMonkey()
-    release s.lock
+    {.locks: [s.lock].}:
+      consume  # fast path
+      sleepyMonkey()
+      wait(s.cond, s.lock)
+      consume  # slow path
+      sleepyMonkey()
+      release s.lock
 
 proc gate*(s: var Semaphore) =
   ## blocking wait on `s`, followed by a signal

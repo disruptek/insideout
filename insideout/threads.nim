@@ -1,32 +1,49 @@
+import std/posix
+export PThread, PThreadAttr
+
+const
+  insideoutNimThreads* {.booldefine.} = false
+
 when (NimMajor, NimMinor) > (1, 6):
-  from std/private/threadtypes import pthreadh, SysThread, PthreadAttr
+  from std/private/threadtypes import pthreadh, SysThread, CpuSet, cpusetZero, cpusetIncl, setAffinity
+  export SysThread
 else:
-  type
-    PthreadAttr* {.byref, importc: "pthread_attr_t", header: "<sys/types.h>".} = object
+  #type
+  #  PThreadAttr* {.byref, importc: "pthread_attr_t", header: "<sys/types.h>".} = object
   const
     pthreadh* = "#define _GNU_SOURCE\n#include <pthread.h>"
 
-proc pthread_kill*(thread: SysThread; signal: cint)
+type
+  ThreadLike = PThread | SysThread
+
+proc pthread_kill*(thread: ThreadLike; signal: cint)
   {.importc, header: pthreadh.}
-proc pthread_join*(thread: SysThread; value: ptr pointer): cint
+proc pthread_join*(thread: ThreadLike; value: ptr pointer): cint
   {.importc, header: pthreadh.}
-proc pthread_create*(a1: var SysThread, a2: var Pthread_attr,
+proc pthread_create*(a1: var ThreadLike, a2: var PThreadAttr,
                      a3: proc (x: pointer): pointer {.noconv.},
                      a4: pointer): cint
   {.importc, header: pthreadh.}
-proc pthread_cancel*(thread: SysThread): cint
+proc pthread_cancel*(thread: ThreadLike): cint
   {.importc, header: pthreadh.}
 proc pthread_setcancelstate*(state: cint; oldstate: ptr cint): cint
   {.importc, header: pthreadh.}
 proc pthread_setcanceltype*(tipe: cint; oldtipe: ptr cint): cint
   {.importc, header: pthreadh.}
-proc pthread_attr_init*(a1: var Pthread_attr): cint
+proc pthread_attr_init*(a1: var PThreadAttr): cint
   {.importc, header: pthreadh.}
-proc pthread_attr_setstack*(a1: ptr Pthread_attr, a2: pointer, a3: int): cint
+proc pthread_attr_setstack*(a1: ptr PThreadAttr, a2: pointer, a3: int): cint
   {.importc, header: pthreadh.}
-proc pthread_attr_setstacksize*(a1: var Pthread_attr, a2: int): cint
+proc pthread_attr_setstacksize*(a1: var PThreadAttr, a2: int): cint
   {.importc, header: pthreadh.}
-proc pthread_attr_destroy*(a1: var Pthread_attr): cint
+proc pthread_attr_destroy*(a1: var PThreadAttr): cint
   {.importc, header: pthreadh.}
-proc pthread_setname_np*(thread: SysThread; name: cstring): cint
+proc pthread_setname_np*(thread: ThreadLike; name: cstring): cint
   {.importc, header: pthreadh.}
+
+proc pinToCpu*(thread: ThreadLike; cpu: Natural) {.inline.} =
+  when not defined(macosx):
+    var s {.noinit.}: CpuSet
+    cpusetZero(s)
+    cpusetIncl(cpu.cint, s)
+    setAffinity(SysThread(thread), csize_t(sizeof(s)), s)

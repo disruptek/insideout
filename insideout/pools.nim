@@ -66,16 +66,11 @@ iterator mitems*[A, B](pool: var Pool[A, B]): var Runtime[A, B] =
   for item in pool.list.mitems:
     yield item
 
-proc quit*(pool: var Pool) =
-  ## initiate quits for all the runtimes
-  for item in pool.mitems:
-    if item.ran:
-      quit item
-
 proc shutdown*(pool: var Pool) =
   ## shut down all runtimes in the pool; this operation is
   ## performed automatically when the pool leaves scope
-  quit pool
+  for item in pool.mitems:
+    quit item
 
   # remove runtimes as they terminate
   while not pool.isEmpty:
@@ -94,23 +89,9 @@ proc add*[A, B](pool: var Pool[A, B]; runtime: Runtime[A, B]) =
   node.value = runtime
   pool.list.prepend node
 
-proc fill*[A, B](pool: var Pool[A, B]): Runtime[A, B] =
-  ## add a runtime to the pool
-  new result
-  pool.add result
-  when false:
-    var node: SinglyLinkedNode[Runtime[A, B]]
-    new node
-    new node.value
-    pool.list.prepend node
-    result = node.value
-
 proc spawn*[A, B](pool: var Pool[A, B]; factory: Factory[A, B]; mailbox: Mailbox[B]): Runtime[A, B] =
-  result = fill pool
-  result.spawn(factory, mailbox)
-
-proc spawn*[A, B](pool: var Pool[A, B]; factory: Factory[A, B]): Mailbox[B] =
-  (fill pool).spawn(factory)
+  result = spawn(factory, mailbox)
+  pool.add result
 
 proc newPool*[A, B](factory: Factory[A, B]; mailbox: Mailbox[B]; initialSize: Positive = 1): Pool[A, B] =
   var n = int initialSize  # allow it to reach zero

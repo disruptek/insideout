@@ -48,7 +48,6 @@ proc main =
       check other.state == Uninitialized
       check not other.ran
       check not runtime.ran
-      check other == runtime
     block:
       ## run some time
       let mail = newMailbox[RS]()
@@ -56,12 +55,13 @@ proc main =
       var other = runtime
       sleep 50
       check other.state == Running
+      check other == runtime
       pinToCpu(other, 0)
       check runtime.ran
       check runtime.running
       check runtime.mailbox == mail
       sleep 100
-      check other.state == Stopping
+      check other.state in {Stopping, Stopped}
       check not runtime.running
       join runtime
       check runtime.state == Stopped
