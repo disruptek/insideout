@@ -66,16 +66,11 @@ iterator mitems*[A, B](pool: var Pool[A, B]): var Runtime[A, B] =
   for item in pool.list.mitems:
     yield item
 
-proc quit*(pool: var Pool) =
-  ## initiate quits for all the runtimes
-  for item in pool.mitems:
-    if item.ran:
-      quit item
-
 proc shutdown*(pool: var Pool) =
   ## shut down all runtimes in the pool; this operation is
   ## performed automatically when the pool leaves scope
-  quit pool
+  for item in pool.mitems:
+    quit item
 
   # remove runtimes as they terminate
   while not pool.isEmpty:
