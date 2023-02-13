@@ -17,7 +17,6 @@ import insideout/threads
 const
   insideoutDetached* {.booldefine.} = false
   insideoutCancels* {.booldefine.} = false
-  insideoutNimThreads* {.booldefine.} = false
   insideoutStackSize* {.intdefine.} = 32_768
 
 type
@@ -31,27 +30,37 @@ type
     Stopping
     Stopped
 
-  Work[A, B] = object
-    factory: Factory[A, B]
-    mailbox: ptr Mailbox[B]
-    runtime: ptr RuntimeObj[A, B]
+when insideoutNimThreads:
+  type
+    RuntimeObj[A, B] = object
+      thread: Thread[Runtime[A, B]]
+      factory: Factory[A, B]
+      mailbox: Mailbox[B]
+      status: Atomic[RuntimeState]
+      changed: Cond
+      changer: Lock
+      result: cint
 
-  RuntimeObj[A, B] = object
-    mailbox: Mailbox[B]
-    thread: Thread[Work[A, B]]
-    status: Atomic[RuntimeState]
-    changed: Cond
-    changer: Lock
-    result: cint
-    pthread: PThread
+    Runtime*[A, B] = AtomicRef[RuntimeObj[A, B]]
 
-  Runtime*[A, B] = AtomicRef[RuntimeObj[A, B]]
+  template handle(runtime: RuntimeObj): untyped =
+      cast[PThread](runtime.thread.handle)
+else:
+  type
+    RuntimeObj[A, B] = object
+      handle: PThread
+      factory: Factory[A, B]
+      mailbox: Mailbox[B]
+      status: Atomic[RuntimeState]
+      changed: Cond
+      changer: Lock
+      result: cint
 
-template handle(runtime: RuntimeObj): untyped =
-  when insideoutNimThreads:
-    cast[PThread](runtime.thread.handle)
-  else:
-    runtime.pthread
+    Runtime*[A, B] = AtomicRef[RuntimeObj[A, B]]
+
+proc runtime[A, B](runtime: var RuntimeObj[A, B]): Runtime[A, B] =
+  ## recover the Runtime from the RuntimeObj
+  cast[Runtime[A, B]](addr runtime)
 
 proc `=copy`*[A, B](runtime: var RuntimeObj[A, B]; other: RuntimeObj[A, B]) {.error.} =
   ## copies are denied
@@ -112,7 +121,7 @@ proc hash*(runtime: Runtime): Hash =
     of Uninitialized:
       raise ValueError.newException "runtime is uninitialized"
     else:
-      cast[Hash](runtime.handle)
+      cast[Hash](runtime[].handle)
 
 proc `$`*(runtime: Runtime): string =
   result = "<run:"
@@ -125,7 +134,7 @@ proc `==`*(a, b: Runtime): bool =
   mixin hash
   hash(a) == hash(b)
 
-proc cancel[A, B](runtime: var RuntimeObj[A, B]): bool =
+proc cancel*[A, B](runtime: var RuntimeObj[A, B]): bool =
   when insideoutCancels:
     result = 0 == pthread_cancel(runtime.handle)
     if result:
@@ -133,7 +142,7 @@ proc cancel[A, B](runtime: var RuntimeObj[A, B]): bool =
   else:
     send(runtime.mailbox, nil.B)
 
-proc kill[A, B](runtime: var RuntimeObj[A, B]; sig: int = 9): bool =
+proc kill*[A, B](runtime: var RuntimeObj[A, B]; sig: int = 9): bool =
   when insideoutCancels:
     result = 0 == pthread_kill(runtime.handle, sig.cint)
     if result:
@@ -141,7 +150,7 @@ proc kill[A, B](runtime: var RuntimeObj[A, B]; sig: int = 9): bool =
   else:
     send(runtime.mailbox, nil.B)
 
-proc shutdown[A, B](runtime: var RuntimeObj[A, B]) =
+proc shutdown*[A, B](runtime: var RuntimeObj[A, B]) =
   while true:
     case runtime.state
     of Uninitialized, Stopped:
@@ -193,20 +202,17 @@ proc `=destroy`*[A, B](runtime: var RuntimeObj[A, B]) =
     deinitLock runtime.changer
     deinitCond runtime.changed
   reset runtime.mailbox
-  `=destroy`(runtime.thread)
+  when insideoutNimThreads:
+    `=destroy`(runtime.thread)
   store(runtime.status, Uninitialized)
 
-template assertReady(work: Work): untyped =
+template assertReady(runtime: RuntimeObj): untyped =
   when not defined(danger):  # if this isn't dangerous, i don't know what is
-    if work.mailbox.isNil:
+    if runtime.mailbox.isNil:
       raise ValueError.newException "nil mailbox"
-    elif work.factory.fn.isNil:
+    elif runtime.factory.fn.isNil:
       raise ValueError.newException "nil factory function"
-    elif work.mailbox[].isNil:
-      raise ValueError.newException "mailbox uninitialized"
-    elif work.runtime.isNil:
-      raise ValueError.newException "unbound to thread"
-    elif work.runtime[].state != Uninitialized:
+    elif runtime.state != Uninitialized:
       raise ValueError.newException "already launched"
 
 proc renderError(e: ref Exception): string =
@@ -227,12 +233,12 @@ proc bounce*[T: Continuation](c: sink T): T {.inline.} =
       raise
   result = T c
 
-proc dispatcherImpl[A, B](work: Work[A, B]) =
+proc dispatcherImpl[A, B](runtime: Runtime[A, B]) =
   block:
     const name: cstring = $A
     var c: A
     while true:
-      case work.runtime[].state
+      case runtime.state
       of Uninitialized:
         raise Defect.newException:
           "dispatched runtime is uninitialized"
@@ -243,83 +249,76 @@ proc dispatcherImpl[A, B](work: Work[A, B]) =
             0
           else:
             1
-        while work.runtime[].state == Launching:
-          work.runtime[].result =
+        while runtime.state == Launching:
+          runtime[].result =
             case phase
             of 0:
-              pthread_detach(work.runtime[].handle)
+              pthread_detach(runtime[].handle)
             of 1:
               pthread_setcancelstate(PTHREAD_CANCEL_DISABLE.cint, addr prior)
             of 2:
               pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED.cint, addr prior)
             of 3:
-              pthread_setname_np(work.runtime[].handle, name)
+              pthread_setname_np(runtime[].handle, name)
             else:
-              work.runtime[].setState(Running)
+              runtime[].setState(Running)
               0
-          if work.runtime[].result == 0:
+          if runtime[].result == 0:
             inc phase
           else:
-            work.runtime[].setState(Stopping)
+            runtime[].setState(Stopping)
       of Running:
         if dismissed c:
-          c = work.factory.call(work.mailbox[])
+          c = runtime[].factory.call(runtime.mailbox)
         try:
           c = bounce c
           if dismissed c:
-            work.runtime[].setState(Stopping)
+            runtime[].setState(Stopping)
           elif finished c:
             reset c.mom
             reset c
-            work.runtime[].setState(Stopping)
+            runtime[].setState(Stopping)
           else:
             sleepyMonkey()
         except CatchableError as e:
           stdmsg().writeLine:
             renderError e
-          work.runtime[].result =
+          runtime[].result =
             if errno == 0:
               1
             else:
               errno
-          work.runtime[].setState(Stopping)
+          runtime[].setState(Stopping)
       of Stopping:
         when defined(gcOrc):
           GC_runOrc()
         when insideoutDetached:
-          work.runtime[].setState(Stopped)
+          runtime[].setState(Stopped)
         break
       of Stopped:
         break
 
   when insideoutDetached:
-    pthread_exit(addr work.runtime[].result)
+    pthread_exit(addr runtime[].result)
 
 when insideoutNimThreads:
-  proc dispatcher[A, B](work: Work[A, B]) {.thread.} =
+  proc dispatcher[A, B](runtime: Runtime[A, B]) {.thread.} =
     ## thread-local continuation dispatch
     {.cast(gcsafe).}:
-      dispatcherImpl(work)
+      dispatcherImpl(runtime)
 else:
   proc dispatcher[A, B](p: pointer): pointer {.noconv.} =
     ## thread-local continuation dispatch
-    dispatcherImpl(cast[ptr Work[A, B]](p)[])
-
-template factory(runtime: Runtime): untyped =
-  runtime[].thread.data.factory
+    dispatcherImpl(cast[Runtime[A, B]](p))
 
 proc spawn[A, B](runtime: var RuntimeObj[A, B]; factory: Factory[A, B]; mailbox: Mailbox[B]) =
   ## add compute to mailbox
-  runtime.thread.data.factory = factory
+  runtime.factory = factory
   runtime.mailbox = mailbox
-  # XXX we assume that the runtime outlives the thread
-  runtime.thread.data.mailbox = addr runtime.mailbox
-  # XXX we assume that the runtime address begins with the runtime object
-  runtime.thread.data.runtime = addr runtime
-  assertReady runtime.thread.data
+  assertReady runtime
   runtime.setState(Launching)
   when insideoutNimThreads:
-    createThread(runtime.thread, dispatcher, runtime.thread.data)
+    createThread(runtime.thread, dispatcher, runtime.runtime)
   else:
     var attr: PThreadAttr
     doAssert 0 == pthread_attr_init(addr attr)
@@ -328,14 +327,19 @@ proc spawn[A, B](runtime: var RuntimeObj[A, B]; factory: Factory[A, B]; mailbox:
                                                 PTHREAD_CREATE_DETACHED.cint)
     doAssert 0 == pthread_attr_setstacksize(addr attr, insideoutStackSize.cint)
     doAssert 0 == pthread_create(addr runtime.handle, addr attr,
-                                 dispatcher[A, B],
-                                 pointer(addr runtime.thread.data))
+                                 dispatcher[A, B], cast[pointer](addr runtime))
     doAssert 0 == pthread_attr_destroy(addr attr)
 
 proc spawn*[A, B](factory: Factory[A, B]; mailbox: Mailbox[B]): Runtime[A, B] =
   ## create compute from a factory and mailbox
   new result
   spawn(result[], factory, mailbox)
+
+proc moar*[A, B](runtime: Runtime[A, B]): Runtime[A, B] =
+  ## clone a `runtime` to perform the same work
+  assertReady runtime[]
+  new result
+  spawn(result[], runtime[].factory, runtime[].mailbox)
 
 proc quit*[A, B](runtime: Runtime[A, B]) =
   ## ask the runtime to exit
@@ -352,6 +356,10 @@ template running*(runtime: Runtime): bool =
   ## true if the runtime yet runs
   runtime.state in {Launching, Running}
 
+proc factory*[A, B](runtime: Runtime[A, B]): Factory[A, B] {.inline.} =
+  ## recover the factory from the runtime
+  runtime[].factory
+
 proc mailbox*[A, B](runtime: Runtime[A, B]): Mailbox[B] {.inline.} =
   ## recover the mailbox from the runtime
   runtime[].mailbox
@@ -359,9 +367,6 @@ proc mailbox*[A, B](runtime: Runtime[A, B]): Mailbox[B] {.inline.} =
 proc pinToCpu*(runtime: Runtime; cpu: Natural) {.inline.} =
   ## assign a runtime to a specific cpu index
   if runtime.ran:
-    when insideoutNimThreads:
-      pinToCpu(runtime[].thread, cpu)
-    else:
-      discard
+    pinToCpu(runtime[].handle, cpu)
   else:
     raise ValueError.newException "runtime unready to pin"

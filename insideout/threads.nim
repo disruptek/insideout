@@ -1,8 +1,11 @@
 import std/posix
 export PThread, PThreadAttr
 
+const
+  insideoutNimThreads* {.booldefine.} = false
+
 when (NimMajor, NimMinor) > (1, 6):
-  from std/private/threadtypes import pthreadh, SysThread
+  from std/private/threadtypes import pthreadh, SysThread, CpuSet, cpusetZero, cpusetIncl, setAffinity
   export SysThread
 else:
   #type
@@ -37,3 +40,10 @@ proc pthread_attr_destroy*(a1: var PThreadAttr): cint
   {.importc, header: pthreadh.}
 proc pthread_setname_np*(thread: ThreadLike; name: cstring): cint
   {.importc, header: pthreadh.}
+
+proc pinToCpu*(thread: ThreadLike; cpu: Natural) {.inline.} =
+  when not defined(macosx):
+    var s {.noinit.}: CpuSet
+    cpusetZero(s)
+    cpusetIncl(cpu.cint, s)
+    setAffinity(SysThread(thread), csize_t(sizeof(s)), s)
