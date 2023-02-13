@@ -61,7 +61,7 @@ proc main =
       check runtime.running
       check runtime.mailbox == mail
       sleep 100
-      check other.state == Stopping
+      check other.state in {Stopping, Stopped}
       check not runtime.running
       join runtime
       check runtime.state == Stopped

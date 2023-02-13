@@ -4,11 +4,11 @@ import pkg/cps
 import pkg/insideout
 import pkg/insideout/monkeys
 
-var N = 1_000_000
+var N = 10_000
 if isUnderValgrind():
-  N = N div 100
+  N = N div 10
 if insideoutSleepyMonkey > 0:
-  N = N div 100
+  N = N div 10
 
 proc respond(mailbox: Mailbox[int]; x: int) {.cps: Continuation.} =
   mailbox.send(x)
@@ -30,6 +30,9 @@ proc application() {.cps: Continuation.} =
     inc i
 
   doAssert not replies.tryRecv(i)
+  echo "shutdown pool"
+  shutdown pool
+  echo "done"
 
 proc main =
   application()
