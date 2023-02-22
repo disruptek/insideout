@@ -71,4 +71,3 @@ proc novelThread*[T](c: var T): T {.cpsMagic.} =
   var mailbox = newMailbox[T](1)
   var runtime = spawn(Waiter, mailbox)
   result = cast[T](comeFrom(c, mailbox))
-  quit runtime

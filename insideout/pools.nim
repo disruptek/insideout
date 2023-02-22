@@ -51,7 +51,7 @@ proc safeRemove[T](L: var SinglyLinkedList[T], n: SinglyLinkedNode[T]): bool {.d
       L.tail = prev # update tail if we removed the last node
   true
 
-proc isEmpty*(pool: var Pool): bool {.inline.} =
+func isEmpty*(pool: var Pool): bool {.inline.} =
   pool.list.head.isNil
 
 proc drain*[A, B](pool: var Pool[A, B]) =
@@ -69,15 +69,21 @@ iterator mitems*[A, B](pool: var Pool[A, B]): var Runtime[A, B] =
 proc shutdown*(pool: var Pool) =
   ## shut down all runtimes in the pool; this operation is
   ## performed automatically when the pool leaves scope
+
+  # XXX: this gets rewritten for detached...
   for item in pool.mitems:
-    quit item
+    when insideoutDetached:
+      quit item
+    else:
+      item.mailbox.send nil
 
   # remove runtimes as they terminate
   while not pool.isEmpty:
     drain pool
 
-proc `=destroy`*[A, B](dest: var Pool[A, B]) =
-  shutdown dest
+proc `=destroy`*[A, B](pool: var Pool[A, B]) =
+  if not pool.isEmpty:
+    shutdown pool
 
 proc `=copy`*[A, B](dest: var Pool[A, B]; src: Pool[A, B]) =
   `=destroy`(dest)
@@ -89,7 +95,7 @@ proc add*[A, B](pool: var Pool[A, B]; runtime: Runtime[A, B]) =
   node.value = runtime
   pool.list.prepend node
 
-proc spawn*[A, B](pool: var Pool[A, B]; factory: Factory[A, B]; mailbox: Mailbox[B]): Runtime[A, B] =
+proc spawn*[A, B](pool: var Pool[A, B]; factory: Factory[A, B]; mailbox: Mailbox[B]): Runtime[A, B] {.discardable.} =
   result = spawn(factory, mailbox)
   pool.add result
 

@@ -81,13 +81,9 @@ proc setState(runtime: var RuntimeObj; value: RuntimeState) =
       sleepyMonkey()
       if compareExchange(runtime.status, prior, value,
                          order = moSequentiallyConsistent):
-        if prior == Uninitialized:
-          initCond runtime.changed
-          initLock runtime.changer
-        else:
-          sleepyMonkey()
-          withLock runtime.changer:
-            broadcast runtime.changed
+        sleepyMonkey()
+        withLock runtime.changer:
+          broadcast runtime.changed
         break
 
 proc state*(runtime: Runtime): RuntimeState =
@@ -123,44 +119,27 @@ proc hash*(runtime: Runtime): Hash =
     else:
       cast[Hash](runtime[].handle)
 
+proc `$`*(thread: PThread or SysThread): string =
+  # safe on linux at least
+  thread.uint.toHex()
+
+proc `$`(runtime: RuntimeObj): string =
+  $(cast[uint](runtime.handle).toHex())
+
 proc `$`*(runtime: Runtime): string =
-  result = "<run:"
-  result.add hash(runtime).int.toHex(6)
-  result.add "-"
-  result.add $runtime.state
-  result.add ">"
+  case runtime.state
+  of Uninitialized:
+    result = "<unruntime>"
+  else:
+    result = "<run:"
+    result.add $runtime[]
+    result.add "-"
+    result.add $runtime.state
+    result.add ">"
 
 proc `==`*(a, b: Runtime): bool =
   mixin hash
   hash(a) == hash(b)
-
-proc cancel*[A, B](runtime: var RuntimeObj[A, B]): bool =
-  when insideoutCancels:
-    result = 0 == pthread_cancel(runtime.handle)
-    if result:
-      runtime.setState(Stopped)
-  else:
-    send(runtime.mailbox, nil.B)
-
-proc kill*[A, B](runtime: var RuntimeObj[A, B]; sig: int = 9): bool =
-  when insideoutCancels:
-    result = 0 == pthread_kill(runtime.handle, sig.cint)
-    if result:
-      runtime.setState(Stopped)
-  else:
-    send(runtime.mailbox, nil.B)
-
-proc shutdown*[A, B](runtime: var RuntimeObj[A, B]) =
-  while true:
-    case runtime.state
-    of Uninitialized, Stopped:
-      break
-    of Running:
-      runtime.setState(Stopping)
-    of Stopping:
-      if not cancel runtime:
-        # XXX: lost thread?
-        runtime.setState(Stopped)
 
 proc join(runtime: var RuntimeObj): int {.inline.} =
   while true:
@@ -171,8 +150,11 @@ proc join(runtime: var RuntimeObj): int {.inline.} =
     of Launching:
       discard wait runtime
     of Running:
-      discard runtime.cancel() # XXX: temporary
-      runtime.setState(Stopping)
+      runtime.mailbox.send nil
+      when insideoutDetached:
+        runtime.setState(Stopping)
+      else:
+        discard wait runtime
     of Stopping:
       when insideoutDetached:
         withLock runtime.changer:
@@ -190,13 +172,84 @@ proc join*(runtime: Runtime): int {.discardable, inline.} =
   ## spins while the runtime is Launching, and returns immediately
   ## if the runtime is Stopped.  otherwise, returns the result of
   ## pthread_join() while assigning the return value of the runtime.
-  join runtime[]
+  discard join runtime[]
+
+when insideoutCancels:
+  proc quit[A, B](runtime: var RuntimeObj[A, B]) =
+    ## gently ask the runtime to exit
+    case runtime.state
+    of Uninitialized, Stopping, Stopped:
+      discard
+    else:
+      runtime.setState(Stopping)
+
+  proc cancel[A, B](runtime: var RuntimeObj[A, B]): bool =
+    ## cancel a runtime; true if the runtime is not running
+    case runtime.state
+    of Uninitialized, Stopped:
+      result = true
+    else:
+      result = 0 == pthread_cancel(runtime.handle)
+      if result:
+        runtime.setState(Stopped)
+
+  proc signal[A, B](runtime: var RuntimeObj[A, B]; sig: int): bool =
+    ## send a signal to a runtime; true if successful
+    if runtime.state in {Launching, Running, Stopping}:
+      result = 0 == pthread_kill(runtime.handle, sig.cint)
+
+  proc kill[A, B](runtime: var RuntimeObj[A, B]): bool =
+    ## kill a runtime; true if the runtime is not running
+    result = runtime.state notin {Launching, Running, Stopping}
+    if not result:
+      result = signal(runtime, 9)
+      if result:
+        runtime.setState(Stopped)
+else:
+  proc quit[A, B](runtime: var RuntimeObj[A, B]) =
+    ## gently ask the runtime to exit
+    case runtime.state
+    of Uninitialized, Stopped:
+      discard
+    of Stopping:
+      # XXX: temporary to work around possible race;
+      #      remove once we have a non-blocking recv
+      #      (or detached threads)
+      runtime.mailbox.send nil.B
+      discard join runtime
+    else:
+      runtime.mailbox.send nil.B
+      discard join runtime
+
+  proc cancel[A, B](runtime: var RuntimeObj[A, B]): bool =
+    quit runtime
+
+  proc kill[A, B](runtime: var RuntimeObj[A, B]): bool =
+    quit runtime
+
+proc quit*[A, B](runtime: Runtime[A, B]) =
+  ## gently ask the runtime to exit
+  if not runtime.isNil:
+    quit runtime[]
+
+proc shutdown[A, B](runtime: var RuntimeObj[A, B]) =
+  while true:
+    case runtime.state
+    of Uninitialized, Stopped:
+      break
+    of Running:
+      runtime.setState(Stopping)
+    of Stopping:
+      if not cancel runtime:
+        # XXX: lost thread?
+        runtime.setState(Stopped)
 
 proc `=destroy`*[A, B](runtime: var RuntimeObj[A, B]) =
   ## ensure the runtime has stopped before it is destroyed
   mixin `=destroy`
   if runtime.state != Uninitialized:
     discard join runtime
+    # XXX: ideally, the client must hold a ref to listen to the changer
     withLock runtime.changer:
       broadcast runtime.changed
     deinitLock runtime.changer
@@ -204,7 +257,6 @@ proc `=destroy`*[A, B](runtime: var RuntimeObj[A, B]) =
   reset runtime.mailbox
   when insideoutNimThreads:
     `=destroy`(runtime.thread)
-  store(runtime.status, Uninitialized)
 
 template assertReady(runtime: RuntimeObj): untyped =
   when not defined(danger):  # if this isn't dangerous, i don't know what is
@@ -271,15 +323,16 @@ proc dispatcherImpl[A, B](runtime: Runtime[A, B]) =
         if dismissed c:
           c = runtime[].factory.call(runtime.mailbox)
         try:
-          c = bounce c
-          if dismissed c:
+          var x = bounce(move c)
+          if dismissed x:
             runtime[].setState(Stopping)
-          elif finished c:
-            reset c.mom
-            reset c
+          elif finished x:
+            reset x.mom
+            reset x
             runtime[].setState(Stopping)
           else:
             sleepyMonkey()
+            c = move x
         except CatchableError as e:
           stdmsg().writeLine:
             renderError e
@@ -333,24 +386,15 @@ proc spawn[A, B](runtime: var RuntimeObj[A, B]; factory: Factory[A, B]; mailbox:
 proc spawn*[A, B](factory: Factory[A, B]; mailbox: Mailbox[B]): Runtime[A, B] =
   ## create compute from a factory and mailbox
   new result
+  initLock result[].changer
+  initCond result[].changed
   spawn(result[], factory, mailbox)
 
-proc moar*[A, B](runtime: Runtime[A, B]): Runtime[A, B] =
+proc clone*[A, B](runtime: Runtime[A, B]): Runtime[A, B] =
   ## clone a `runtime` to perform the same work
   assertReady runtime[]
   new result
   spawn(result[], runtime[].factory, runtime[].mailbox)
-
-proc quit*[A, B](runtime: Runtime[A, B]) =
-  ## ask the runtime to exit
-  when insideoutDetached:
-    case runtime.state
-    of Uninitialized, Stopped, Stopping:
-      discard
-    else:
-      runtime[].setState(Stopping)
-  else:
-    runtime[].mailbox.send nil.B
 
 template running*(runtime: Runtime): bool =
   ## true if the runtime yet runs
@@ -370,3 +414,10 @@ proc pinToCpu*(runtime: Runtime; cpu: Natural) {.inline.} =
     pinToCpu(runtime[].handle, cpu)
   else:
     raise ValueError.newException "runtime unready to pin"
+
+proc self*(): PThread =
+  pthread_self()
+
+proc handle*(runtime: Runtime): PThread =
+  if runtime.isNil:
+    raise Defect.newException ""
