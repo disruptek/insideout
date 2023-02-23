@@ -141,7 +141,7 @@ proc `==`*(a, b: Runtime): bool =
   mixin hash
   hash(a) == hash(b)
 
-proc join(runtime: var RuntimeObj): int {.inline.} =
+proc join[A, B](runtime: var RuntimeObj[A, B]): int {.inline.} =
   while true:
     case runtime.state
     of Uninitialized:
@@ -154,7 +154,8 @@ proc join(runtime: var RuntimeObj): int {.inline.} =
         runtime.setState(Stopping)
       else:
         withLock runtime.changer:
-          runtime.mailbox.send nil
+          when B is ref or B is ptr:
+            runtime.mailbox.send nil.B
           if runtime.state == Running:
             wait(runtime.changed, runtime.changer)
     of Stopping:
@@ -217,10 +218,12 @@ else:
       # XXX: temporary to work around possible race;
       #      remove once we have a non-blocking recv
       #      (or detached threads)
-      runtime.mailbox.send nil.B
+      when B is ref or B is ptr:
+        runtime.mailbox.send nil.B
       discard join runtime
     else:
-      runtime.mailbox.send nil.B
+      when B is ref or B is ptr:
+        runtime.mailbox.send nil.B
       discard join runtime
 
   proc cancel[A, B](runtime: var RuntimeObj[A, B]): bool =

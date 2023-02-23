@@ -1,4 +1,5 @@
 import std/os
+import std/strformat
 
 import pkg/balls
 
@@ -6,29 +7,26 @@ import pkg/cps
 
 import insideout/runtimes
 import insideout/mailboxes
-
-type
-  RS = ref string
-
-proc `==`(a: RS; b: string): bool = a[] == b
-proc `==`(a, b: RS): bool = a[] == b[]
-proc `$`(rs: RS): string {.used.} = rs[]
-proc rs(s: string): RS =
-  result = new string
-  result[] = s
+import insideout/semaphores
+import insideout/atomic/refs
 
 type
   Server = ref object of Continuation
-
-proc service(mail: Mailbox[RS]) {.cps: Server.} =
-  checkpoint "service runs"
-  sleep 100
-  checkpoint "service exits"
+  SharedSemaphore = AtomicRef[Semaphore]
 
 proc main =
+  var sem: SharedSemaphore
+  new sem
+  initSemaphore sem
+
+  proc service(mail: Mailbox[SharedSemaphore]) {.cps: Server.} =
+    checkpoint "service runs"
+    var sem = recv mail
+    wait sem
+    checkpoint "service exits"
 
   const Service = whelp service
-  var runtime: Runtime[Server, RS]
+  var runtime: Runtime[Server, SharedSemaphore]
 
   block balls_breaks_destructor_semantics:
     block:
@@ -50,18 +48,21 @@ proc main =
       check not runtime.ran
     block:
       ## run some time
-      let mail = newMailbox[RS]()
+      let mail = newMailbox[SharedSemaphore](1)
       runtime = Service.spawn(mail)
       var other = runtime
-      sleep 50
-      check other.state == Running
+      check other.state in {Launching, Running}
       check other == runtime
       pinToCpu(other, 0)
       check runtime.ran
       check runtime.running
       check runtime.mailbox == mail
+      mail.send sem
+      signal sem
       sleep 100
-      check other.state in {Stopping, Stopped}
+      check sem.available == 0
+      check fmt"state mismatch: {other.state}":
+        other.state in {Stopping, Stopped}
       check not runtime.running
       join runtime
       check runtime.state == Stopped
