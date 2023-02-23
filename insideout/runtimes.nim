@@ -150,11 +150,13 @@ proc join(runtime: var RuntimeObj): int {.inline.} =
     of Launching:
       discard wait runtime
     of Running:
-      runtime.mailbox.send nil
       when insideoutDetached:
         runtime.setState(Stopping)
       else:
-        discard wait runtime
+        withLock runtime.changer:
+          runtime.mailbox.send nil
+          if runtime.state == Running:
+            wait(runtime.changed, runtime.changer)
     of Stopping:
       when insideoutDetached:
         withLock runtime.changer:
@@ -232,17 +234,19 @@ proc quit*[A, B](runtime: Runtime[A, B]) =
   if not runtime.isNil:
     quit runtime[]
 
-proc shutdown[A, B](runtime: var RuntimeObj[A, B]) =
-  while true:
-    case runtime.state
-    of Uninitialized, Stopped:
-      break
-    of Running:
-      runtime.setState(Stopping)
-    of Stopping:
-      if not cancel runtime:
-        # XXX: lost thread?
-        runtime.setState(Stopped)
+when false:
+  proc shutdown[A, B](runtime: var RuntimeObj[A, B]) =
+    while true:
+      case runtime.state
+      of Uninitialized, Stopped:
+        break
+      of Running:
+        runtime.setState(Stopping)
+      of Stopping:
+        when false:
+          if not cancel runtime:
+            # XXX: lost thread?
+            runtime.setState(Stopped)
 
 proc `=destroy`*[A, B](runtime: var RuntimeObj[A, B]) =
   ## ensure the runtime has stopped before it is destroyed
