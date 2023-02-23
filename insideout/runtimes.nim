@@ -424,4 +424,4 @@ proc self*(): PThread =
 
 proc handle*(runtime: Runtime): PThread =
   if runtime.isNil:
-    raise Defect.newException ""
+    raise Defect.newException "runtime uninitialized"
