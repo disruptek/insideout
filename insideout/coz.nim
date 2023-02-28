@@ -14,13 +14,25 @@ when insideoutCoz:
   {.passC: "-include coz.h".}
   {.passL: "-ldl".}
 
-  template progress*(name: static[string]): untyped =
-    {.emit: "COZ_PROGRESS_NAMED($#);" % [ escape(name) ].}
+  proc emitCoz(name: string; s: string): NimNode =
+    var s = "$#($#);" % [ name, escape(s) ]
+    nnkPragma.newTree:
+      nnkExprColonExpr.newTree:
+        [ident"emit", nnkBracket.newTree s.newLit]
 
-  template transaction*(name: static[string]; body: typed): untyped =
-    {.emit: "COZ_BEGIN($#);" % [ escape(name) ].}
-    body
-    {.emit: "COZ_END($#);" % [ escape(name) ].}
+  macro progress*(name: static[string]): untyped =
+    emitCoz("COZ_PROGRESS_NAMED", name)
+
+  macro transaction*(name: static[string]; body: typed): untyped =
+    result = newStmtList()
+    result.add:
+      emitCoz("COZ_BEGIN", name)
+    result.add:
+      nnkDefer.newTree:
+        emitCoz("COZ_END", name)
+    result.add:
+      body
+
 else:
   template progress*(name: static[string]): untyped =
     discard
