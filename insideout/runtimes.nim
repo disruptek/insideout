@@ -119,7 +119,7 @@ proc hash*(runtime: Runtime): Hash =
     else:
       cast[Hash](runtime[].handle)
 
-proc `$`*(thread: PThread or SysThread): string =
+proc `$`(thread: PThread or SysThread): string =
   # safe on linux at least
   thread.uint.toHex()
 
