@@ -5,6 +5,7 @@ import std/posix
 import std/strutils
 
 import pkg/cps
+from pkg/cps/spec import cpsStackFrames
 
 import insideout/atomic/refs
 export refs
@@ -287,8 +288,10 @@ proc bounce*[T: Continuation](c: sink T): T {.inline.} =
       var x = y(c)
       c = x
     except CatchableError:
-      if not c.dismissed:
-        writeStackFrames c
+      # NOTE: it will always be dismissed...
+      when cpsStackFrames:
+        if not c.dismissed:
+          c.writeStackFrames()
       raise
   result = T c
 
@@ -341,6 +344,12 @@ proc dispatcherImpl[A, B](runtime: Runtime[A, B]) =
             sleepyMonkey()
             c = move x
         except CatchableError as e:
+          when compileOption"stackTrace":
+            writeStackTrace()
+            # NOTE: it will always be dismissed...
+            when cpsStackFrames:
+              if not dismissed c:
+                c.writeStackFrames()
           stdmsg().writeLine:
             renderError e
           runtime[].result =
