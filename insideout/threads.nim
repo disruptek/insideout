@@ -38,8 +38,23 @@ proc pthread_attr_setstacksize*(a1: var PThreadAttr, a2: int): cint
   {.importc, header: pthreadh.}
 proc pthread_attr_destroy*(a1: var PThreadAttr): cint
   {.importc, header: pthreadh.}
-proc pthread_setname_np*(thread: ThreadLike; name: cstring): cint
-  {.importc, header: pthreadh.}
+
+when defined(macosx):
+  proc pthread_setname_np*(name: cstring): cint
+    {.importc, header: pthreadh.}
+
+  proc pthread_setname_np*(thread: ThreadLike; name: cstring): cint =
+    if pthread_self() == thread:
+      result = pthread_setname_np(name)
+    else:
+      raise Defect.newException:
+        "renaming foreign threads is unsupported under osx"
+else:
+  proc pthread_setname_np*(thread: ThreadLike; name: cstring): cint
+    {.importc, header: pthreadh.}
+
+  proc pthread_setname_np*(name: cstring): cint =
+    pthread_setname_np(pthread_self(), name)
 
 proc pinToCpu*(thread: ThreadLike; cpu: Natural) {.inline.} =
   when not defined(macosx):
