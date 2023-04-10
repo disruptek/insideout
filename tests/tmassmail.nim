@@ -18,7 +18,7 @@ proc respond(mailbox: Mailbox[ref int]; x: int) {.cps: Continuation.} =
   new y
   y[] = x
   noop()
-  mailbox.send(y)
+  mailbox.send(move y)
 
 proc application() {.cps: Continuation.} =
   var request = newMailbox[Continuation](N)
@@ -31,11 +31,11 @@ proc application() {.cps: Continuation.} =
     var c = whelp respond(replies, i)
     # run the first leg locally, for orc cycle registration reasons
     c = bounce(move c)
-    request.send(c)
+    request.send(move c)
     dec i
 
   while i < N:
-    discard replies.recv()
+    doAssert replies.recv()[] > 0
     inc i
 
   # we should have consumed all outputs
