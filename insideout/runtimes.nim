@@ -321,11 +321,17 @@ proc dispatcherImpl[A, B](runtime: Runtime[A, B]) =
             of 0:
               pthread_detach(runtime[].handle)
             of 1:
-              pthread_setcancelstate(PTHREAD_CANCEL_DISABLE.cint, addr prior)
+              writeLine(stderr, "cancel state")
+              #pthread_setcancelstate(PTHREAD_CANCEL_DISABLE.cint, addr prior)
+              discard
             of 2:
+              writeLine(stderr, "cancel type")
               pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED.cint, addr prior)
+              discard
             of 3:
+              writeLine(stderr, "thread name")
               pthread_setname_np(runtime[].handle, name)
+              discard
             else:
               runtime[].setState(Running)
               0
