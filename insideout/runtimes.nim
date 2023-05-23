@@ -281,6 +281,7 @@ proc renderError(e: ref Exception): string =
   result.add e.msg
 
 proc bounce*[T: Continuation](c: sink T): T {.inline.} =
+  writeLine(stderr, "bounce " & $c.state)
   var c: Continuation = move c
   if c.running:
     try:
@@ -288,11 +289,13 @@ proc bounce*[T: Continuation](c: sink T): T {.inline.} =
       var x = y(c)
       c = x
     except CatchableError:
+      writeLine(stderr, "crash")
       # NOTE: it will always be dismissed...
       when cpsStackFrames:
         if not c.dismissed:
           c.writeStackFrames()
       raise
+  writeLine(stderr, "bounced to " & $c.state)
   result = T c
 
 proc dispatcherImpl[A, B](runtime: Runtime[A, B]) =
@@ -311,6 +314,7 @@ proc dispatcherImpl[A, B](runtime: Runtime[A, B]) =
             0
           else:
             1
+        writeLine(stderr, "phase " & $phase)
         while runtime.state == Launching:
           runtime[].result =
             case phase
@@ -331,6 +335,7 @@ proc dispatcherImpl[A, B](runtime: Runtime[A, B]) =
             runtime[].setState(Stopping)
       of Running:
         if dismissed c:
+          writeLine(stderr, "factory")
           c = runtime[].factory.call(runtime.mailbox)
         try:
           var x = bounce(move c)
