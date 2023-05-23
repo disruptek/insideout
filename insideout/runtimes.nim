@@ -329,15 +329,18 @@ proc dispatcherImpl[A, B](runtime: Runtime[A, B]) =
               pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED.cint, addr prior)
             of 3:
               writeLine(stderr, "thread name")
-              pthread_setname_np(runtime[].handle, name)
+              #pthread_setname_np(runtime[].handle, name)
+              0
             else:
               runtime[].setState(Running)
               0
           if runtime[].result == 0:
             inc phase
           else:
+            writeLine(stderr, "stopping due to code " & $runtime[].result)
             runtime[].setState(Stopping)
       of Running:
+        writeLine(stderr, "running")
         if dismissed c:
           writeLine(stderr, "factory")
           c = runtime[].factory.call(runtime.mailbox)
