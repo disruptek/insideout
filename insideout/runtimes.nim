@@ -19,6 +19,9 @@ const
   insideoutDetached* {.booldefine.} = false
   insideoutCancels* {.booldefine.} = false
   insideoutStackSize* {.intdefine.} = 32_768
+  insideoutCancelState* {.booldefine.} = true
+  insideoutCancelType* {.booldefine.} = true
+  insideoutRenameThread* {.booldefine.} = true
 
 type
   Dispatcher* = proc(p: pointer): pointer {.noconv.}
@@ -306,11 +309,15 @@ proc dispatcherImpl[A, B](runtime: Runtime[A, B]) =
           "dispatched runtime is uninitialized"
       of Launching:
         var prior: cint
-        var phase =
-          when insideoutDetached:
-            0
-          else:
-            1
+        var phase = 0
+        when not insideoutDetached:
+          phase = 1
+        when not insideoutCancelState:
+          phase = 2
+        when not insideoutCancelType:
+          phase = 3
+        when not insideoutRenameThread:
+          phase = 4
         while runtime.state == Launching:
           runtime[].result =
             case phase
