@@ -19,6 +19,9 @@ const
   insideoutDetached* {.booldefine.} = false
   insideoutCancels* {.booldefine.} = false
   insideoutStackSize* {.intdefine.} = 32_768
+  insideoutCancelState* {.booldefine.} = true
+  insideoutCancelType* {.booldefine.} = true
+  insideoutRenameThread* {.booldefine.} = true
 
 type
   Dispatcher* = proc(p: pointer): pointer {.noconv.}
@@ -281,7 +284,6 @@ proc renderError(e: ref Exception): string =
   result.add e.msg
 
 proc bounce*[T: Continuation](c: sink T): T {.inline.} =
-  writeLine(stderr, "bounce " & $c.state)
   var c: Continuation = move c
   if c.running:
     try:
@@ -289,13 +291,11 @@ proc bounce*[T: Continuation](c: sink T): T {.inline.} =
       var x = y(c)
       c = x
     except CatchableError:
-      writeLine(stderr, "crash")
       # NOTE: it will always be dismissed...
       when cpsStackFrames:
         if not c.dismissed:
           c.writeStackFrames()
       raise
-  writeLine(stderr, "bounced to " & $c.state)
   result = T c
 
 proc dispatcherImpl[A, B](runtime: Runtime[A, B]) =
@@ -309,40 +309,35 @@ proc dispatcherImpl[A, B](runtime: Runtime[A, B]) =
           "dispatched runtime is uninitialized"
       of Launching:
         var prior: cint
-        var phase =
-          when insideoutDetached:
-            0
-          else:
-            1
-        writeLine(stderr, "phase " & $phase)
+        var phase = 0
+        when not insideoutDetached:
+          phase = 1
+        when not insideoutCancelState:
+          phase = 2
+        when not insideoutCancelType:
+          phase = 3
+        when not insideoutRenameThread:
+          phase = 4
         while runtime.state == Launching:
           runtime[].result =
             case phase
             of 0:
               pthread_detach(runtime[].handle)
             of 1:
-              writeLine(stderr, "cancel state")
-              #pthread_setcancelstate(PTHREAD_CANCEL_DISABLE.cint, addr prior)
-              0
+              pthread_setcancelstate(PTHREAD_CANCEL_DISABLE.cint, addr prior)
             of 2:
-              writeLine(stderr, "cancel type")
               pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED.cint, addr prior)
             of 3:
-              writeLine(stderr, "thread name")
-              #pthread_setname_np(runtime[].handle, name)
-              0
+              pthread_setname_np(runtime[].handle, name)
             else:
               runtime[].setState(Running)
               0
           if runtime[].result == 0:
             inc phase
           else:
-            writeLine(stderr, "stopping due to code " & $runtime[].result)
             runtime[].setState(Stopping)
       of Running:
-        writeLine(stderr, "running")
         if dismissed c:
-          writeLine(stderr, "factory")
           c = runtime[].factory.call(runtime.mailbox)
         try:
           var x = bounce(move c)
