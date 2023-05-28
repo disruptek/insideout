@@ -301,6 +301,7 @@ proc dispatcherImpl[A, B](runtime: Runtime[A, B]) =
   block:
     const name: cstring = $A
     var c: A
+    var phase = 0
     while true:
       case runtime.state
       of Uninitialized:
@@ -308,33 +309,29 @@ proc dispatcherImpl[A, B](runtime: Runtime[A, B]) =
           "dispatched runtime is uninitialized"
       of Launching:
         var prior: cint
-        var phase = 0
-        when not insideoutDetached:
-          phase = 1
-        when not insideoutCancelState:
-          phase = 2
-        when not insideoutCancelType:
-          phase = 3
-        when not insideoutRenameThread:
-          phase = 4
-        while runtime.state == Launching:
-          runtime[].result =
-            case phase
-            of 0:
+        case phase
+        of 0:
+          when insideoutDetached:
+            runtime[].result =
               pthread_detach(runtime[].handle)
-            of 1:
+        of 1:
+          when insideoutCancelState:
+            runtime[].result =
               pthread_setcancelstate(PTHREAD_CANCEL_DISABLE.cint, addr prior)
-            of 2:
+        of 2:
+          when insideoutCancelType:
+            runtime[].result =
               pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED.cint, addr prior)
-            of 3:
+        of 3:
+          when insideoutRenameThread:
+            runtime[].result =
               pthread_setname_np(runtime[].handle, name)
-            else:
-              runtime[].setState(Running)
-              0
-          if runtime[].result == 0:
-            inc phase
-          else:
-            runtime[].setState(Stopping)
+        else:
+          runtime[].setState(Running)
+        if runtime[].result == 0:
+          inc phase
+        else:
+          runtime[].setState(Stopping)
       of Running:
         if dismissed c:
           c = runtime[].factory.call(runtime.mailbox)
