@@ -8,6 +8,10 @@ This is an experimental concurrency library.
 [![License](https://img.shields.io/github/license/disruptek/insideout?style=flat)](#license)
 [![IRC](https://img.shields.io/badge/chat-%23%23disruptek%20on%20libera.chat-brightgreen?style=flat)](https://web.libera.chat/##disruptek)
 
+## Support
+
+insideout supports `mm:arc` and `backend:c` or `backend:cpp` on Linux.
+
 ## Documentation
 
 Nim's documentation generator breaks when attempting to read insideout.
