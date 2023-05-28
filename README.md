@@ -10,7 +10,10 @@ This is an experimental concurrency library.
 
 ## Support
 
-insideout supports `mm:arc` and `backend:c` or `backend:cpp` on Linux.
+insideout supports `define:useMalloc`, `mm:arc` and `backend:c` or
+`backend:cpp` and POSIX threads. insideout does not support `mm:orc`.
+
+insideout is tested with valgrind/helgrind/drd using c and c++.
 
 ## Documentation
 

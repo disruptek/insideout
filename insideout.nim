@@ -1,6 +1,21 @@
 when (NimMajor, NimMinor) < (1, 7):
   {.error: "insideout requires nim >= 1.7".}
 
+when not defined(gcArc):
+  when defined gcOrc:
+    {.warning: "insideout does not support mm:orc".}
+  else:
+    {.error: "insideout requires mm:arc".}
+
+when not defined(useMalloc):
+  {.error: "insideout requires define:useMalloc".}
+
+when not (defined(c) or defined(cpp)):
+  {.error: "insideout requires backend:c or backend:cpp".}
+
+when not (defined(posix) and compileOption"threads"):
+  {.error: "insideout requires POSIX threads".}
+
 import std/genasts
 import std/macros
 
