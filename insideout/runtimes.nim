@@ -124,8 +124,7 @@ proc hash*(runtime: Runtime): Hash =
       cast[Hash](runtime[].handle)
 
 proc `$`(thread: PThread or SysThread): string =
-  # safe on linux at least
-  thread.uint.toHex()
+  thread.hash.uint32.toHex()
 
 proc `$`(runtime: RuntimeObj): string =
   $(cast[uint](runtime.handle).toHex())
