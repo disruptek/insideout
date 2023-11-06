@@ -392,7 +392,7 @@ proc spawn[A, B](runtime: var RuntimeObj[A, B]; factory: Factory[A, B]; mailbox:
   when insideoutNimThreads:
     createThread(runtime.thread, dispatcher, runtime.runtime)
   else:
-    var attr: PThreadAttr
+    var attr {.noinit.}: PThreadAttr
     doAssert 0 == pthread_attr_init(addr attr)
     when insideoutDetached:
       doAssert 0 == pthread_attr_setdetachstate(addr attr,
