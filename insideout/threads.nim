@@ -1,9 +1,6 @@
 import std/posix
 export PThread, PThreadAttr
 
-const
-  insideoutNimThreads* {.booldefine.} = false
-
 when (NimMajor, NimMinor) > (1, 6):
   from std/private/threadtypes import pthreadh, SysThread, CpuSet, cpusetZero, cpusetIncl, setAffinity
   export SysThread
