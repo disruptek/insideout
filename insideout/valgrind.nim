@@ -1,6 +1,8 @@
+import std/compilesettings
 import std/genasts
 import std/macros
 import std/options
+import std/strutils
 
 const
   insideoutValgrind* {.booldefine.} = false
@@ -42,3 +44,9 @@ proc isUnderValgrind*(): bool =
       {.emit: "result = RUNNING_ON_VALGRIND;".}
     runningOnValgrind = some result
   get runningOnValgrind
+
+var runningSanitizer {.compileTime.} =
+  some:
+    "-fsanitize=" in querySetting(SingleValueSetting.compileOptions)
+proc isSanitizing*(): bool =
+  get runningSanitizer
