@@ -1,5 +1,8 @@
-when (NimMajor, NimMinor) < (1, 7):
-  {.error: "insideout requires nim >= 1.7".}
+when defined(isNimSkull):
+  discard
+else:
+  when (NimMajor, NimMinor) < (1, 7):
+    {.error: "insideout requires nim >= 1.7".}
 
 when not defined(gcArc):
   when defined gcOrc:
