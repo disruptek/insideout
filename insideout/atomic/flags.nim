@@ -3,6 +3,7 @@ import std/macros
 import std/atomics
 
 import insideout/futex
+export checkWait
 
 # this is a bit loony but we want to support nimskull, so...
 
@@ -14,11 +15,9 @@ macro getFlags*[T](flags: var AtomicFlags[T]): T =
 
 template flagType*(flag: typedesc): untyped =
   when sizeof(flag) <= 2:
-    uint16
+    uint32 # uint16
   elif sizeof(flag) <= 4:
     uint32
-  elif sizeof(flag) <= 8:
-    uint64
   else:
     {.error: "bad idea".}
 
@@ -88,3 +87,13 @@ proc waitMask*[T; V](flags: var AtomicFlags[T]; compare: T;
 proc wakeMask*[T; V](flags: var AtomicFlags[T]; mask: set[V];
                   count = high(cint)): cint {.discardable, inline.} =
   wakeMask(flags, toFlags[T, V](mask), count = count)
+
+proc toggle*[T; V](flags: var AtomicFlags[T]; past, future: V): bool
+  {.discardable, inline.} =
+  var prior = getFlags flags
+  while (prior and past.toFlag) != 0:
+    result = compareExchange(flags, prior,
+                             (prior or future.toFlag) xor past.toFlag,
+                             order = moSequentiallyConsistent)
+    if result:
+      break

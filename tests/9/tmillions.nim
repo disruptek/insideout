@@ -45,11 +45,11 @@ proc main4(n: int) {.cps: Continuation.} =
 
 proc go() =
 
-  var count = 50
+  var count = 100
   when not defined(release):
     count = 20
-  if isUnderValgrind():
-    echo "valgrind detected"
+  if isUnderValgrind() or isSanitizing():
+    echo "valgrind/sanitizer detected"
     count = 7
 
   var pool = newPool(ContinuationWaiter, mail, initialSize = 16)
@@ -64,7 +64,7 @@ proc go() =
     echo n
     if n == total:
       break
-    os.sleep(50)
+    os.sleep(250)
 
   # exit the threads
   mail.disablePush()

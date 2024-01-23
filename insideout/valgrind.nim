@@ -21,17 +21,17 @@ macro whenValgrind(tmplate: typed): untyped =
         logic
   result = tmplate
 
-template happensBefore*(x: typed): untyped {.whenValgrind.} =
+template happensBefore*(x: pointer): untyped {.whenValgrind.} =
   block:
     let y {.exportc, inject.} = x
     {.emit: "ANNOTATE_HAPPENS_BEFORE(y);".}
 
-template happensAfter*(x: typed): untyped {.whenValgrind.} =
+template happensAfter*(x: pointer): untyped {.whenValgrind.} =
   block:
     let y {.exportc, inject.} = x
     {.emit: "ANNOTATE_HAPPENS_AFTER(y);".}
 
-template happensBeforeForgetAll*(x: typed): untyped {.whenValgrind.} =
+template happensBeforeForgetAll*(x: pointer): untyped {.whenValgrind.} =
   block:
     let y {.exportc, inject.} = x
     {.emit: "ANNOTATE_HAPPENS_BEFORE_FORGET_ALL(y);".}
@@ -45,7 +45,7 @@ proc isUnderValgrind*(): bool =
     runningOnValgrind = some result
   get runningOnValgrind
 
-var runningSanitizer {.compileTime.} =
+const runningSanitizer =
   some:
     "-fsanitize=" in querySetting(SingleValueSetting.compileOptions)
 proc isSanitizing*(): bool =

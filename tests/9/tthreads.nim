@@ -34,12 +34,17 @@ block:
 
 block:
   ## runtimes exiting after running input continuations
-  proc goodbye(box: Mailbox[Continuation]) {.cps: Continuation.} =
-    var mail = recv box
-    if not dismissed mail:
-      discard trampoline(move mail)
-
   var ran: Atomic[int]
+
+  proc goodbye(box: Mailbox[Continuation]) {.cps: Continuation.} =
+    var c = recv box
+    while not c.dismissed and not c.finished:
+      var f: proc (x: sink Continuation): Continuation {.nimcall.} = c.fn
+      var n = f(c)
+      c = n
+      if load(ran) == N:
+        discard
+        #kill box
 
   proc hello() {.cps: Continuation.} =
     atomicInc ran
@@ -54,5 +59,9 @@ block:
       remote.send:
         whelp hello()
 
+    disablePush remote
+    #waitForDeath remote
+
   main()
+  echo "ran ", ran.load, " continuations"
   doAssert ran.load == N

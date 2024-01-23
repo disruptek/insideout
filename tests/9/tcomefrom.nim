@@ -17,17 +17,14 @@ proc value(c: Query): int {.cpsVoodoo.} = c.y
 proc ask(mailbox: Mailbox[Query]; x: int): int {.cps: Query.} =
   ## the "client"
   setupQueryWith x
-  echo "asking " & $x & " in " & $getThreadId()
+  debugEcho "asking " & $x & " in " & $getThreadId()
   comeFrom mailbox
-  echo "recover " & $x & " in " & $getThreadId()
   result = value()
+  debugEcho "recovered " & $result & " in " & $getThreadId()
 
 proc rz(a: Oracle; b: Query): Oracle {.cpsMagic.} =
   ## fraternization
-  if a.x >= int.high div 2:
-    a.x = 1
-  else:
-    a.x *= 2
+  a.x *= 2
   b.y += a.x
   result = a
 
@@ -35,17 +32,27 @@ proc setupOracle(o: Oracle): Oracle {.cpsMagic.} =
   o.x = 1
   result = o
 
-proc oracle(mailbox: Mailbox[Query]) {.cps: Oracle.} =
+proc oracle(box: Mailbox[Query]) {.cps: Oracle.} =
   ## the "server"; it does typical continuation stuff
   setupOracle()
   while true:
-    var query = recv mailbox
-    if dismissed query:
+    var c: Continuation
+    var r: WardFlag = tryRecv(box, c.Query)
+    case r
+    of Interrupt, Paused, Empty:
+      if not waitForPoppable(box):
+        # the mailbox is unavailable
+        break
+    of Readable:
+      # the mailbox is unreadable
       break
+    of Writable:
+      # the mailbox is writable because we
+      # just successfully received an item
+      rz c.Query
+      discard trampoline(move c)
     else:
-      rz query
-      discard trampoline(move query)
-      doAssert query.isNil
+      discard
 
 # define a service using a continuation bootstrap
 const SmartService = whelp oracle
@@ -53,7 +60,7 @@ const SmartService = whelp oracle
 proc application(): int {.cps: Continuation.} =
   # create a child service
   var mail = newMailbox[Query]()
-  var pool = newPool[Oracle, Query](SmartService, mail)
+  var pool = newPool[Oracle, Query](SmartService, mail, 1)
   let home = getThreadId()
 
   # submit some questions, etc.
@@ -61,9 +68,11 @@ proc application(): int {.cps: Continuation.} =
   while i > 0:
     result = ask(mail, i)
     dec i
+    doAssert home == getThreadId()
 
   # we're still at home
   doAssert home == getThreadId()
+  #disablePush mail
 
 proc main =
   let was = application()

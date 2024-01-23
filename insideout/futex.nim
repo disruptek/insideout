@@ -5,8 +5,7 @@
 #   * Apache v2 license (license terms in the root directory or at http://www.apache.org/licenses/LICENSE-2.0).
 # at your option. This file may not be copied, modified, or distributed except according to those terms.
 
-# initially, insideout will 
-#import std/atomics
+import std/posix
 
 type
   FutexOp = enum
@@ -70,3 +69,15 @@ proc wakeMask*[T](monitor: var T; mask: uint32; count = high(cint)): cint {.disc
   # Returns the number of actually woken threads
   # or a Posix error code (if negative).
   sysFutex(addr monitor, WakeBitsPrivate, count, val3 = cast[cint](mask))
+
+template checkWait*(waited: cint): untyped =
+  var e = waited
+  if e < 0:
+    e = -e
+    case e
+    of EPERM:
+      stderr.write("EPERM on futex wait\n")
+    of EINTR, EAGAIN:
+      discard
+    else:
+      raise ValueError.newException $strerror(e)

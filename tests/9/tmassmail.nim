@@ -33,6 +33,7 @@ proc application() {.cps: Continuation.} =
     c = bounce(move c)
     request.send(move c)
     dec i
+  disablePush request
 
   while i < N:
     doAssert replies.recv()[] > 0
@@ -41,10 +42,8 @@ proc application() {.cps: Continuation.} =
   # we should have consumed all outputs
   var ignore: ref int
   new ignore
-  doAssert not replies.tryRecv(ignore)
+  doAssert Empty == replies.tryRecv(ignore)
 
-  echo "shutdown pool"
-  shutdown pool
   echo "done"
 
 proc main =

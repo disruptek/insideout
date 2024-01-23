@@ -1,3 +1,8 @@
+# TODO:
+#
+#
+# pools should type-erase if possible
+# impl variety
 import std/lists
 
 import pkg/cps
@@ -72,10 +77,7 @@ proc shutdown*(pool: var Pool) =
 
   # XXX: this gets rewritten for detached...
   for item in pool.mitems:
-    when insideoutDetached:
-      quit item
-    else:
-      item.mailbox.send nil
+    stop item
 
   # remove runtimes as they terminate
   while not pool.isEmpty:
@@ -99,8 +101,8 @@ proc spawn*[A, B](pool: var Pool[A, B]; factory: Factory[A, B]; mailbox: Mailbox
   result = spawn(factory, mailbox)
   pool.add result
 
-proc newPool*[A, B](factory: Factory[A, B]; mailbox: Mailbox[B]; initialSize: Positive = 1): Pool[A, B] =
-  var n = int initialSize  # allow it to reach zero
+proc newPool*[A, B](factory: Factory[A, B]; mailbox: Mailbox[B]; initialSize: Natural = 0): Pool[A, B] =
+  var n = initialSize
   while n > 0:
     discard result.spawn(factory, mailbox)
     dec n

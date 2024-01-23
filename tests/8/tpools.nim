@@ -1,5 +1,8 @@
+import std/os
 import pkg/cps
 import pkg/insideout
+
+quit 1
 
 type
   Oracle = ref object of Continuation  ## server
@@ -17,9 +20,7 @@ proc value(c: Query): int {.cpsVoodoo.} = c.y
 proc ask(mailbox: Mailbox[Query]; x: int): int {.cps: Query.} =
   ## the "client"
   setupQueryWith x
-  #echo "asking " & $x & " in " & $getThreadId()
   goto mailbox
-  #echo "recover " & $x & " in " & $getThreadId()
   result = value()
 
 proc rz(a: Oracle; b: Query): Oracle {.cpsMagic.} =
@@ -35,37 +36,64 @@ proc setupOracle(o: Oracle): Oracle {.cpsMagic.} =
   o.x = 1
   result = o
 
-proc oracle(mailbox: Mailbox[Query]) {.cps: Oracle.} =
+proc oracle(box: Mailbox[Query]) {.cps: Oracle.} =
   ## the "server"; it does typical continuation stuff
-  setupOracle()
   while true:
-    var query = recv mailbox
-    if dismissed query:
+    sleep 1000
+    var query: Query
+    var receipt: WardFlag = tryRecv(box, query)
+    debugEcho receipt
+    case receipt
+    of Paused, Empty:
+      if not waitForPoppable(box):
+        # the mailbox is unavailable
+        echo "unavailable"
+        break
+      else:
+        debugEcho "try again"
+    of Readable:
+      # the mailbox is unreadable
+      echo "unreadable"
       break
-    else:
+    of Writable:
       rz query
       discard trampoline(move query)
-      doAssert query.isNil
+      echo "wrote!"
+    else:
+      discard
 
 # define a service using a continuation bootstrap
 const SmartService = whelp oracle
 
 proc application(home: Mailbox[Continuation]) {.cps: Continuation.} =
   # create a child service
+  echo "i am @ ", getThreadId()
   var mail = newMailbox[Query]()
-  var pool {.used.} = newPool[Oracle, Query](SmartService, mail)
+  var pool {.used.} = newPool(SmartService, mail, 1)
 
   # submit some questions, etc.
   var i = 100
   while i > 0:
-    #echo "result of ", i, " is ", ask(address, i)
+    echo "i am @ ", getThreadId()
     discard ask(mail, i)
+    echo "i am @ ", getThreadId()
     goto home
+    echo "i am @ ", getThreadId()
     dec i
+  sleep 100
+  echo "i am @ ", getThreadId()
+  disablePush mail
+  echo "disabled push"
+  sleep 100
 
   # go home and drain the pool
   goto home
-  home.send nil.Continuation
+  echo "i am @ ", getThreadId()
+  sleep 100
+  for runtime in pool.mitems:
+    cancel runtime
+    echo runtime
+  sleep 100
 
 proc main =
   echo "\n\n\n"

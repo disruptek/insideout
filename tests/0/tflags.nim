@@ -1,16 +1,17 @@
-import insideout/atomic/flags
+import pkg/insideout/atomic/flags
 
 type
   Lamp = enum
     Red
     Blue
     Green
+  AtomicLamp = AtomicFlags[uint16]
 
 doAssert Red.toFlag == 1
 doAssert Blue.toFlag == 2
 doAssert Green.toFlag == 4
-var x: AtomicFlags[Lamp]
-doAssert Red notin x
+var x: AtomicLamp
+doAssert not x.contains(Red) # notin x
 doAssert (x |= Blue) == {}
 doAssert Blue in x
 doAssert (x |= Red) == {Blue}

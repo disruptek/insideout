@@ -1,6 +1,4 @@
-when defined(isNimSkull):
-  discard
-else:
+when not defined(isNimSkull):
   when (NimMajor, NimMinor) < (1, 7):
     {.error: "insideout requires nim >= 1.7".}
 
@@ -38,9 +36,13 @@ proc goto*[T](continuation: var T; where: Mailbox[T]): T {.cpsMagic.} =
   ## move the current continuation to another compute domain
   # we want to be sure that a future destroy finds nothing,
   # so we move the continuation and then send /that/ ref.
-  var message = move continuation
-  where.send message
+  #var message = move continuation
+  where.send(move continuation)
   result = nil.T
+
+proc cooperate*(a: Continuation): Continuation {.cpsMagic.} =
+  ## yield to the dispatcher
+  a
 
 macro createWaitron*(A: typedesc; B: typedesc): untyped =
   ## The compiler really hates when you do this one thing;
@@ -51,13 +53,30 @@ macro createWaitron*(A: typedesc; B: typedesc): untyped =
   name.copyLineInfo(A)
   genAstOpt({}, name, A, B):
     proc name(box: Mailbox[B]) {.cps: A.} =
-      ## generic blocking mailbox consumer
+      ## generic mailbox consumer
+      mixin cooperate
       while true:
-        var mail = recv box
-        if dismissed mail:
+        var c: Continuation
+        var r: WardFlag = tryRecv(box, c.B)
+        case r
+        of Paused, Empty:
+          if not waitForPoppable(box):
+            # the mailbox is unavailable
+            break
+        of Readable:
+          # the mailbox is unreadable
           break
+        of Writable:
+          # the mailbox is writable because we
+          # just successfully received an item
+          while c.running:
+            c = bounce c
+            cooperate()
+          # reap the local in the cps environment
+          reset c
         else:
-          discard trampoline(move mail)
+          discard
+
     whelp name
 
 const
