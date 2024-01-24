@@ -76,7 +76,10 @@ proc newMailbox*[T](initialSize: Positive): Mailbox[T] =
   new result
   when T isnot void:
     result[].queue = newLoonyQueue[T]()
-    initWard(result[].ward, result[].queue, initialSize)
+    when result[].ward is BoundedWard[T]:
+      initWard(result[].ward, result[].queue, initialSize)
+    else:
+      initWard(result[].ward, result[].queue)
 
 proc flags*[T](mail: Mailbox[T]): set[WardFlag] =
   ## return the current state of the mailbox

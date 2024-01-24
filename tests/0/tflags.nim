@@ -5,7 +5,7 @@ type
     Red
     Blue
     Green
-  AtomicLamp = AtomicFlags[uint16]
+  AtomicLamp = AtomicFlags[uint32]
 
 doAssert Red.toFlag == 1
 doAssert Blue.toFlag == 2
