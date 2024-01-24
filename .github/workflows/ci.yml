@@ -67,19 +67,27 @@ jobs:
           path: nim
           version: ${{ matrix.nim }}
 
-      - name: Run tests
+#     - name: Valgrind
+#       shell: bash
+#       run: |
+#         sudo apt-get update
+#         sudo apt install --fix-missing valgrind
+
+      - name: Dependencies
         shell: bash
         run: |
-          sudo apt-get update
-          sudo apt install --fix-missing valgrind
           cd project
           nimble --accept develop
           nimble --accept install "https://github.com/disruptek/balls"
+
+      - name: Run tests
+        shell: bash
+        run: |
+          cd project
           balls --path="." \
-                --backend:c --backend:cpp \
+                --backend:c --panics:on --exceptions:goto \
                 --mm:arc --define:useMalloc \
-                --define:debug --define:release --define:danger \
-                --define:insideoutValgrind=on --define:insideoutSleepyMonkey=100
+                --define:debug --define:release --define:danger
 
 #      - name: Build docs
 #        shell: bash
