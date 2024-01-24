@@ -27,8 +27,11 @@ type
 
   RuntimeFlag* = enum
     Frozen
+    NotFrozen
     Halted
+    NotHalted
     Reaped
+    NotReaped
 
   RuntimeState* = enum
     Uninitialized
@@ -181,6 +184,8 @@ proc teardown[A, B](p: pointer) {.noconv.} =
       reset runtime[].mailbox
     runtime[].setState(Stopped)
     runtime[].flags |= {Halted, Reaped}
+    runtime[].flags.toggle(NotHalted, Halted)
+    runtime[].flags.toggle(NotReaped, Reaped)
     wakeMask(runtime[].flags, {Halted, Reaped})
     # we won't get another chance to properly
     # decrement the rc on the runtime
@@ -198,7 +203,7 @@ proc chill[A, B](runtime: var RuntimeObj[A, B]): cint =
     let current = getFlags(runtime.flags)
     let flags = toFlags[FlagT, RuntimeFlag](current)
     if Frozen in flags:
-      checkWait waitMask(runtime.flags, current, {Frozen})
+      checkWait waitMask(runtime.flags, current, {NotFrozen})
       result =
         pthread_setcancelstate(PTHREAD_CANCEL_DISABLE.cint, addr prior)
   else:
@@ -350,7 +355,8 @@ proc pause*[A, B](runtime: Runtime[A, B]) =
   ## pause a running runtime
   case state(runtime[])
   of Running:
-    runtime[].flags |= {Frozen}
+    if toggle(runtime[].flags, NotFrozen, Frozen):
+      wakeMask(runtime[].flags, {Frozen})
   else:
     discard
 
@@ -358,7 +364,8 @@ proc resume*[A, B](runtime: Runtime[A, B]) =
   ## resume a running runtime
   case state(runtime[])
   of Running:
-    runtime[].flags ^= {Frozen}
+    if toggle(runtime[].flags, Frozen, NotFrozen):
+      wakeMask(runtime[].flags, {NotFrozen})
   else:
     discard
 
@@ -366,6 +373,7 @@ proc halt*[A, B](runtime: Runtime[A, B]) =
   ## halt a running runtime
   case state(runtime[])
   of Running:
-    runtime[].flags |= {Halted}
+    if toggle(runtime[].flags, NotHalted, Halted):
+      wakeMask(runtime[].flags, {Halted})
   else:
     discard
