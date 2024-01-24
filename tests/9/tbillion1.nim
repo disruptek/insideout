@@ -9,7 +9,11 @@ import pkg/cps
 
 import insideout
 
-const N = 10_000_000
+let N =
+  if getEnv"GITHUB_ACTIONS" == "true":
+    10_000_000
+  else:
+    1_000_000_000
 let M = countProcessors() div 2
 
 proc work() {.cps: Continuation.} =
