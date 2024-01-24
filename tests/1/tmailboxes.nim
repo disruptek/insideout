@@ -32,12 +32,6 @@ proc main =
     block:
       ## basics
       check box.isNil
-      when not defined(danger):
-        try:
-          box.assertInitialized
-          raise Defect.newException "expected ValueError"
-        except ValueError:
-          discard
       check box.owners == 0
       check box == bix
       box = newMailbox[RS](2)

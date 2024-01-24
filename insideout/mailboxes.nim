@@ -85,6 +85,7 @@ proc newMailbox*[T](initialSize: Positive): Mailbox[T] =
 
 proc flags*[T](mail: Mailbox[T]): set[WardFlag] =
   ## return the current state of the mailbox
+  assertInitialized mail
   mail[].ward.flags
 
 # FIXME: send/recv either lose block or gain wait/timeout

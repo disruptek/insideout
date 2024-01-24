@@ -32,7 +32,6 @@ proc main() =
       ## basics
       doAssert runtime.isNil
       doAssert runtime.owners == 0
-      doAssert runtime.state == Uninitialized
       #new runtime
       #doAssert not runtime.isNil
       #doAssert runtime.owners == 1

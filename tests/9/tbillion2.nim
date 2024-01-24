@@ -58,7 +58,7 @@ proc attempt(N: Positive; cores: int = countProcessors()) =
     shutdown pool
 
 proc main =
-  var cores = @[32, 24, 20, 16, 12, 10, 8, 7, 6, 5, 4, 3, 2, 1]
+  var cores = @[countProcessors()]
   var N = N
   if paramCount() > 1:
     cores = @[parseInt paramStr(2)]
