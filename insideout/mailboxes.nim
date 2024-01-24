@@ -21,7 +21,7 @@ type
       ward: UnBoundedWard[T]
       queue: LoonyQueue[T]
 
-  Mailbox*[T] = AtomicRef[MailboxObj[T]]
+  Mailbox*[T] {.requiresInit.} = AtomicRef[MailboxObj[T]]
 
 proc `=copy`*[T](dest: var MailboxObj[T]; src: MailboxObj[T]) {.error.}
 
@@ -58,11 +58,13 @@ proc `$`*(mail: Mailbox): string =
     result.add: $mail.owners
     result.add ">"
 
-proc assertInitialized*(mail: Mailbox) =
-  ## raise a ValueError if the mailbox is not initialized
-  when not defined(danger):
+when defined(danger):
+  template assertInitialized*(mail: Mailbox): untyped = discard
+else:
+  proc assertInitialized*(mail: Mailbox) =
+    ## raise a Defect if the mailbox is not initialized
     if unlikely mail.isNil:
-      raise ValueError.newException "mailbox uninitialized"
+      raise AssertionDefect.newException "mailbox uninitialized"
 
 proc newMailbox*[T](): Mailbox[T] =
   ## create a new mailbox of unbounded size
@@ -147,25 +149,33 @@ proc trySend*[T](mail: Mailbox[T]; item: sink T): WardFlag =
 # XXX: naming is hard
 
 proc waitForPushable*[T](mail: Mailbox[T]): bool =
+  assertInitialized mail
   waitForPushable[T] mail[].ward
 
 proc waitForPoppable*[T](mail: Mailbox[T]): bool =
+  assertInitialized mail
   waitForPoppable[T] mail[].ward
 
 proc disablePush*[T](mail: Mailbox[T]) =
+  assertInitialized mail
   closeWrite mail[].ward
 
 proc disablePop*[T](mail: Mailbox[T]) =
+  assertInitialized mail
   closeRead mail[].ward
 
 proc pause*[T](mail: Mailbox[T]) =
+  assertInitialized mail
   pause mail[].ward
 
 proc resume*[T](mail: Mailbox[T]) =
+  assertInitialized mail
   resume mail[].ward
 
 proc waitForEmpty*[T](mail: Mailbox[T]) =
+  assertInitialized mail
   waitForEmpty mail[].ward
 
 proc waitForFull*[T](mail: Mailbox[T]) =
+  assertInitialized mail
   waitForFull mail[].ward

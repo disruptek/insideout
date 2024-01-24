@@ -62,30 +62,33 @@ proc `=copy`*[A, B](runtime: var RuntimeObj[A, B]; other: RuntimeObj[A, B]) {.er
 proc state[A, B](runtime: var RuntimeObj[A, B]): RuntimeState =
   load(runtime.status, order = moAcquire)
 
+when defined(danger):
+  template assertInitialized*(runtime: Runtime): untyped = discard
+else:
+  proc assertInitialized*(runtime: Runtime) =
+    ## raise a Defect if the runtime is not initialized
+    if unlikely runtime.isNil:
+      raise AssertionDefect.newException "runtime uninitialized"
+
 proc setState(runtime: var RuntimeObj; value: RuntimeState) =
-  case value
-  of Uninitialized:
-    raise ValueError.newException:
-      "attempt to assign Uninitialized state"
-  else:
-    var prior: RuntimeState = Uninitialized
-    while prior < value:
-      if compareExchange(runtime.status, prior, value,
-                         order = moSequentiallyConsistent):
-        break
+  var prior: RuntimeState = Uninitialized
+  while prior < value:
+    if compareExchange(runtime.status, prior, value,
+                       order = moSequentiallyConsistent):
+      break
 
 proc state*[A, B](runtime: Runtime[A, B]): RuntimeState =
-  if runtime.isNil:
-    Uninitialized
-  else:
-    state(runtime[])
+  assertInitialized runtime
+  state(runtime[])
 
 proc ran*[A, B](runtime: Runtime[A, B]): bool {.deprecated.} =
   ## true if the runtime has run
+  assertInitialized runtime
   runtime.state >= Launching
 
 proc hash*(runtime: Runtime): Hash =
   ## whatfer inclusion in a table, etc.
+  assertInitialized runtime
   cast[Hash](runtime[].handle)
 
 proc `$`(thread: PThread or SysThread): string =
@@ -95,18 +98,17 @@ proc `$`(runtime: RuntimeObj): string =
   $(cast[uint](runtime.handle).toHex())
 
 proc `$`*(runtime: Runtime): string =
-  case runtime.state
-  of Uninitialized:
-    result = "<unruntime>"
-  else:
-    result = "<run:"
-    result.add $runtime[]
-    result.add "-"
-    result.add $runtime.state
-    result.add ">"
+  assertInitialized runtime
+  result = "<run:"
+  result.add $runtime[]
+  result.add "-"
+  result.add $runtime.state
+  result.add ">"
 
 proc `==`*(a, b: Runtime): bool =
   mixin hash
+  assertInitialized a
+  assertInitialized b
   hash(a) == hash(b)
 
 proc cancel[A, B](runtime: var RuntimeObj[A, B]): bool =
@@ -130,6 +132,7 @@ proc kill[A, B](runtime: var RuntimeObj[A, B]): bool {.used.} =
 
 proc stop*[A, B](runtime: Runtime[A, B]) =
   ## gently ask the runtime to exit
+  assertInitialized runtime
   case state(runtime[])
   of Uninitialized, Stopping, Stopped:
     discard
@@ -138,6 +141,7 @@ proc stop*[A, B](runtime: Runtime[A, B]) =
 
 proc join*[A, B](runtime: Runtime[A, B]) =
   ## block until the runtime has exited
+  assertInitialized runtime
   while true:
     let current: FlagT = getFlags(runtime[].flags)
     let flags: set[RuntimeFlag] = toFlags[FlagT, RuntimeFlag](current)
@@ -149,6 +153,7 @@ proc join*[A, B](runtime: Runtime[A, B]) =
 proc cancel*[A, B](runtime: Runtime[A, B]): bool {.discardable.} =
   ## cancel a runtime; true if successful.
   ## always succeeds if the runtime is not running.
+  assertInitialized runtime
   result = cancel runtime[]
 
 template assertReady(runtime: RuntimeObj): untyped =
@@ -322,37 +327,41 @@ proc spawn*[A, B](factory: Factory[A, B]; mailbox: Mailbox[B]): Runtime[A, B] =
 
 proc clone*[A, B](runtime: Runtime[A, B]): Runtime[A, B] =
   ## clone a `runtime` to perform the same work
+  assertInitialized runtime
   assertReady runtime[]
   new result
   spawn(result[], runtime[].factory, runtime[].mailbox)
 
 proc factory*[A, B](runtime: Runtime[A, B]): Factory[A, B] =
   ## recover the factory from the runtime
+  assertInitialized runtime
   runtime[].factory
 
 proc mailbox*[A, B](runtime: Runtime[A, B]): Mailbox[B] =
   ## recover the mailbox from the runtime
+  assertInitialized runtime
   runtime[].mailbox
 
 proc pinToCpu*[A, B](runtime: Runtime[A, B]; cpu: Natural) =
   ## assign a runtime to a specific cpu index
-  if runtime.ran:
+  assertInitialized runtime
+  if state(runtime[]) >= Launching:
     pinToCpu(runtime[].handle, cpu)
   else:
     raise ValueError.newException "runtime unready to pin"
 
 proc handle*[A, B](runtime: Runtime[A, B]): PThread =
-  if runtime.isNil:
-    raise Defect.newException "runtime uninitialized"
-  else:
-    runtime[].handle
+  assertInitialized runtime
+  runtime[].handle
 
 proc flags*[A, B](runtime: Runtime[A, B]): set[RuntimeFlag] =
   ## recover the flags from the runtime
+  assertInitialized runtime
   toFlags[FlagT, RuntimeFlag](runtime[].flags)
 
 proc pause*[A, B](runtime: Runtime[A, B]) =
   ## pause a running runtime
+  assertInitialized runtime
   case state(runtime[])
   of Running:
     if toggle(runtime[].flags, NotFrozen, Frozen):
@@ -362,6 +371,7 @@ proc pause*[A, B](runtime: Runtime[A, B]) =
 
 proc resume*[A, B](runtime: Runtime[A, B]) =
   ## resume a running runtime
+  assertInitialized runtime
   case state(runtime[])
   of Running:
     if toggle(runtime[].flags, Frozen, NotFrozen):
@@ -371,6 +381,7 @@ proc resume*[A, B](runtime: Runtime[A, B]) =
 
 proc halt*[A, B](runtime: Runtime[A, B]) =
   ## halt a running runtime
+  assertInitialized runtime
   case state(runtime[])
   of Running:
     if toggle(runtime[].flags, NotHalted, Halted):
