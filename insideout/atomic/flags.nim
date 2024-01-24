@@ -35,7 +35,7 @@ proc toFlags*[T; V](value: T): set[V] {.discardable.} =
   else:
     result = cast[set[V]](value)
 
-proc toFlags*[T; V](flags: set[V]): T =
+proc toFlags*[T; V](flags: set[V]): T {.deprecated.} =
   for flag in flags.items:
     result = result or flag.toFlag
 
@@ -77,19 +77,19 @@ macro `^=`*[T; V](flags: var AtomicFlags[T]; many: set[V]): set[V] =
           newCall(toFlags, many), bindSym"moSequentiallyConsistent"))
 
 proc waitMask*[T; V](flags: var AtomicFlags[T]; mask: set[V]): cint
-  {.discardable, inline.} =
+  {.discardable.} =
   waitMask(flags, toFlags[T, V](mask))
 
 proc waitMask*[T; V](flags: var AtomicFlags[T]; compare: T;
-                     mask: set[V]): cint {.discardable, inline.} =
+                     mask: set[V]): cint {.discardable.} =
   waitMask(flags, cast[AtomicFlags[T]](compare), toFlags[T, V](mask))
 
 proc wakeMask*[T; V](flags: var AtomicFlags[T]; mask: set[V];
-                  count = high(cint)): cint {.discardable, inline.} =
+                  count = high(cint)): cint {.discardable.} =
   wakeMask(flags, toFlags[T, V](mask), count = count)
 
 proc toggle*[T; V](flags: var AtomicFlags[T]; past, future: V): bool
-  {.discardable, inline.} =
+  {.discardable.} =
   var prior = getFlags flags
   while (prior and past.toFlag) != 0:
     result = compareExchange(flags, prior,

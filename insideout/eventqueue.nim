@@ -160,7 +160,7 @@ proc register[T](c: var T; fd: Fd; events: set[Event]): Id =
   # TODO: store id -> fd ?
   # eq.registry.insert(result, data)
 
-proc init() {.inline.} =
+proc init() =
   if eq.state == Newborn:
     eq.interest = epoll_create(O_CLOEXEC)
     eq.interrupt = eventfd(0, O_NONBLOCK or O_CLOEXEC)

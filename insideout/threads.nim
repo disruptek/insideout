@@ -67,7 +67,7 @@ else:
   proc pthread_setname_np*(name: cstring): cint =
     pthread_setname_np(pthread_self(), name)
 
-proc pinToCpu*(thread: ThreadLike; cpu: Natural) {.inline.} =
+proc pinToCpu*(thread: ThreadLike; cpu: Natural) =
   when not defined(macosx):
     var s {.noinit.}: CpuSet
     cpusetZero(s)

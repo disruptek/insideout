@@ -36,34 +36,34 @@ let NR_Futex {.importc: "__NR_futex", header: "<sys/syscall.h>".}: cint
 proc syscall(sysno: clong): cint {.header:"<unistd.h>", varargs.}
 
 proc sysFutex(futex: pointer; op: cint; val1: cint; timeout: pointer = nil;
-              val2: pointer = nil; val3: cint = 0): cint {.inline.} =
+              val2: pointer = nil; val3: cint = 0): cint =
   syscall(NR_Futex, futex, op, val1, timeout, val2, val3)
 
-proc wait*[T](monitor: var T; compare: T): cint {.inline.} =
+proc wait*[T](monitor: var T; compare: T): cint =
   ## Suspend a thread if the value of the futex is the same as refVal.
   sysFutex(addr monitor, WaitPrivate, cast[cint](compare))
 
-proc wait*[T](monitor: var T): cint {.inline.} =
+proc wait*[T](monitor: var T): cint =
   ## Suspend a thread until the value of the futex changes.
   sysFutex(addr monitor, WaitPrivate, cast[cint](monitor))
 
-proc waitMask*[T](monitor: var T; compare: T; mask: uint32): cint {.inline.} =
+proc waitMask*[T](monitor: var T; compare: T; mask: uint32): cint =
   ## Suspend a thread until any of `mask` bits are set.
   sysFutex(addr monitor, WaitBitsPrivate, cast[cint](compare),
            val3 = cast[cint](mask))
 
-proc waitMask*[T](monitor: var T; mask: uint32): cint {.inline.} =
+proc waitMask*[T](monitor: var T; mask: uint32): cint =
   ## Suspend a thread until any of `mask` bits are set.
   sysFutex(addr monitor, WaitBitsPrivate, cast[cint](monitor),
            val3 = cast[cint](mask))
 
-proc wake*[T](monitor: var T; count = high(cint)): cint {.discardable, inline.} =
+proc wake*[T](monitor: var T; count = high(cint)): cint {.discardable.} =
   ## Wake as many as `count` threads from the same process.
   # Returns the number of actually woken threads
   # or a Posix error code (if negative).
   sysFutex(addr monitor, WakePrivate, count)
 
-proc wakeMask*[T](monitor: var T; mask: uint32; count = high(cint)): cint {.discardable, inline.} =
+proc wakeMask*[T](monitor: var T; mask: uint32; count = high(cint)): cint {.discardable.} =
   ## Wake as many as `count` threads from the same process,
   ## which are all waiting on any set bit in `mask`.
   # Returns the number of actually woken threads

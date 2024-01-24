@@ -58,7 +58,7 @@ proc `$`*(mail: Mailbox): string =
     result.add: $mail.owners
     result.add ">"
 
-proc assertInitialized*(mail: Mailbox) {.inline.} =
+proc assertInitialized*(mail: Mailbox) =
   ## raise a ValueError if the mailbox is not initialized
   when not defined(danger):
     if unlikely mail.isNil:

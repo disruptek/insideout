@@ -165,7 +165,7 @@ proc renderError(e: ref Exception): string =
   result.add ": "
   result.add e.msg
 
-proc bounce*[T: Continuation](c: sink T): T {.inline.} =
+proc bounce*[T: Continuation](c: sink T): T =
   var c: Continuation = move c
   var fn = c.fn
   result = T fn(move c)
@@ -326,11 +326,11 @@ proc clone*[A, B](runtime: Runtime[A, B]): Runtime[A, B] =
   new result
   spawn(result[], runtime[].factory, runtime[].mailbox)
 
-proc factory*[A, B](runtime: Runtime[A, B]): Factory[A, B] {.inline.} =
+proc factory*[A, B](runtime: Runtime[A, B]): Factory[A, B] =
   ## recover the factory from the runtime
   runtime[].factory
 
-proc mailbox*[A, B](runtime: Runtime[A, B]): Mailbox[B] {.inline.} =
+proc mailbox*[A, B](runtime: Runtime[A, B]): Mailbox[B] =
   ## recover the mailbox from the runtime
   runtime[].mailbox
 

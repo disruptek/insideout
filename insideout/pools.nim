@@ -56,7 +56,7 @@ proc safeRemove[T](L: var SinglyLinkedList[T], n: SinglyLinkedNode[T]): bool {.d
       L.tail = prev # update tail if we removed the last node
   true
 
-func isEmpty*(pool: var Pool): bool {.inline.} =
+func isEmpty*(pool: var Pool): bool =
   pool.list.head.isNil
 
 proc drain*[A, B](pool: var Pool[A, B]) =

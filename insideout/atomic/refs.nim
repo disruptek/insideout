@@ -12,10 +12,10 @@ type
 
 proc `=copy`*[T](dest: var Reference[T]; src: Reference[T]) {.error.}
 
-proc isNil*[T](arc: AtomicRef[T]): bool {.inline.} =
+proc isNil*[T](arc: AtomicRef[T]): bool =
   arc.reference.isNil
 
-proc `=destroy`*[T](arc: var AtomicRef[T]) {.inline.} =
+proc `=destroy`*[T](arc: var AtomicRef[T]) =
   mixin `=destroy`
   if not arc.reference.isNil:
     let n = fetchSub(arc.reference[].rc, 1, order = moSequentiallyConsistent)
@@ -29,7 +29,7 @@ proc `=destroy`*[T](arc: var AtomicRef[T]) {.inline.} =
       happensBefore(addr arc.reference[].rc)
       arc.reference = nil
 
-proc `=copy`*[T](dest: var AtomicRef[T]; src: AtomicRef[T]) {.inline.} =
+proc `=copy`*[T](dest: var AtomicRef[T]; src: AtomicRef[T]) =
   mixin `=destroy`
   if not src.isNil:
     discard fetchAdd(src.reference.rc, 1, order = moSequentiallyConsistent)
@@ -37,11 +37,11 @@ proc `=copy`*[T](dest: var AtomicRef[T]; src: AtomicRef[T]) {.inline.} =
     `=destroy`(dest)
   dest.reference = src.reference
 
-proc forget*[T](arc: AtomicRef[T]) {.inline.} =
+proc forget*[T](arc: AtomicRef[T]) =
   if not arc.isNil:
     discard fetchSub(arc.reference.rc, 1, order = moSequentiallyConsistent)
 
-proc remember*[T](arc: AtomicRef[T]) {.inline.} =
+proc remember*[T](arc: AtomicRef[T]) =
   if not arc.isNil:
     discard fetchAdd(arc.reference.rc, 1, order = moSequentiallyConsistent)
 
@@ -53,20 +53,23 @@ proc owners*[T](arc: AtomicRef[T]): int =
     if result <= 0:
       raise Defect.newException "atomic ref underrun: " & $result
 
-proc new*[T](arc: var AtomicRef[T]) {.inline.} =
+proc new*[T](arc: var AtomicRef[T]) =
   if not arc.isNil:
     `=destroy`(arc)
   arc.reference = cast[ptr Reference[T]](allocShared0(sizeof Reference[T]))
   if arc.reference.isNil:
     raise Defect.newException "unable to alloc memory for AtomicRef"
 
-proc `[]`*[T](arc: AtomicRef[T]): var T {.inline.} =
-  if arc.isNil:
-    raise Defect.newException "dereference of nil atomic ref " & $T
-  else:
+proc `[]`*[T](arc: AtomicRef[T]): var T =
+  when defined(danger):
     result = arc.reference[].value
+  else:
+    if arc.isNil:
+      raise Defect.newException "dereference of nil atomic ref " & $T
+    else:
+      result = arc.reference[].value
 
-proc address*(arc: AtomicRef): pointer {.inline.} =
+proc address*(arc: AtomicRef): pointer =
   arc.reference
 
-converter dereference*[T](arc: AtomicRef[T]): var T {.inline.} = arc[]
+converter dereference*[T](arc: AtomicRef[T]): var T = arc[]
