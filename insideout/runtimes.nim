@@ -16,7 +16,7 @@ import insideout/threads
 import insideout/eventqueue
 
 const
-  insideoutStackSize* {.intdefine.} = 2*1024*1024
+  insideoutStackSize* {.intdefine.} = 16_384
   insideoutRenameThread* {.booldefine.} = true
 
 type
