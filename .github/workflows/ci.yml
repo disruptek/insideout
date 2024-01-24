@@ -84,8 +84,8 @@ jobs:
         shell: bash
         run: |
           cd project
-          balls --path="." \
-                --backend:c --panics:on --exceptions:goto \
+          balls --path="." --nimblePath="./deps/pkgs/" \
+                --backend:c --panics:on \
                 --mm:arc --define:useMalloc \
                 --define:debug --define:release --define:danger
 
