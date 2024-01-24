@@ -92,37 +92,36 @@ proc waitForPoppable*[T](ward: var Ward[T]): bool =
 proc toggle*[T](ward: var Ward[T]; past, future: WardFlag): bool {.discardable.} =
   ward.state.toggle(past, future)
 
-proc unmarkEmpty*[T](ward: var Ward[T]) =
-  if ward.toggle(Empty, NotEmpty):
-    wakeMask(ward.state, {NotEmpty}, 1)
-
-proc performPush[T](ward: var Ward[T]; item: sink T): WardFlag =
+proc performPush[T](ward: var UnboundedWard[T]; item: sink T): WardFlag =
   result = Readable
-  when ward is BoundedWard:
-    # if we just hit full,
-    let count = fetchSub(ward.size, 1, order = moSequentiallyConsistent)
-    if 1 == count:
-      var full = ward.toggle(NotFull, Full)
-      try:
-        # we can safely push
-        push(ward.queue, move item)
-      finally:
-        if full:
-          let woke = wakeMask(ward.state, {Full}, 1)
-        else:
-          raise Defect.newException "race in push"
-    elif 1 > count:
-      # race case
-      discard fetchAdd(ward.size, 1, order = moSequentiallyConsistent)
-      result = Interrupt
-      raise Defect.newException "unexpected race"
-    else:
+  push(ward.queue, move item)
+  if ward.toggle(Empty, NotEmpty):
+    discard wakeMask(ward.state, {NotEmpty}, 1)
+
+proc performPush[T](ward: var BoundedWard[T]; item: sink T): WardFlag =
+  result = Readable
+  # if we just hit full,
+  let count = fetchSub(ward.size, 1, order = moSequentiallyConsistent)
+  if 1 == count:
+    var full = ward.toggle(NotFull, Full)
+    try:
       # we can safely push
       push(ward.queue, move item)
+    finally:
+      if full:
+        discard wakeMask(ward.state, {Full}, 1)
+      else:
+        raise Defect.newException "race in push"
+  elif 1 > count:
+    # race case
+    discard fetchAdd(ward.size, 1, order = moSequentiallyConsistent)
+    result = Interrupt
+    raise Defect.newException "unexpected race"
   else:
-    # unbounded queue; we can safely push
+    # we can safely push
     push(ward.queue, move item)
-  ward.unmarkEmpty()
+  if ward.toggle(Empty, NotEmpty):
+    discard wakeMask(ward.state, {NotEmpty}, 1)
 
 proc tryPush*[T](ward: var Ward[T]; item: var T): WardFlag =
   let flags = toFlags[FlagT, WardFlag](ward.state)
@@ -148,7 +147,7 @@ proc push*[T](ward: var Ward[T]; item: var T): WardFlag =
     else:
       discard
 
-proc performPop[T](ward: var Ward[T]; item: var T): WardFlag =
+proc performPop[T](ward: var UnboundedWard[T]; item: var T): WardFlag =
   item = pop(ward.queue)
   if item.isNil:
     result = Empty
@@ -156,11 +155,19 @@ proc performPop[T](ward: var Ward[T]; item: var T): WardFlag =
       wakeMask(ward.state, {Empty}, 1)
   else:
     result = Writable
-    when ward is BoundedWard:
-      let count = fetchAdd(ward.size, 1, order = moSequentiallyConsistent)
-      if 0 == count:
-        if ward.toggle(Full, NotFull):
-          wakeMask(ward.state, {NotFull}, 1)
+
+proc performPop[T](ward: var BoundedWard[T]; item: var T): WardFlag =
+  item = pop(ward.queue)
+  if item.isNil:
+    result = Empty
+    if ward.toggle(NotEmpty, Empty):
+      discard wakeMask(ward.state, {Empty}, 1)
+  else:
+    result = Writable
+    let count = fetchAdd(ward.size, 1, order = moSequentiallyConsistent)
+    if 0 == count:
+      if ward.toggle(Full, NotFull):
+        discard wakeMask(ward.state, {NotFull}, 1)
 
 proc tryPop*[T](ward: var Ward[T]; item: var T): WardFlag =
   let flags = toFlags[FlagT, WardFlag](ward.state)
