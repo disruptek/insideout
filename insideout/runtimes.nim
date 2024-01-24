@@ -188,7 +188,6 @@ proc teardown[A, B](p: pointer) {.noconv.} =
     if not runtime[].mailbox.isNil:
       reset runtime[].mailbox
     runtime[].setState(Stopped)
-    runtime[].flags |= {Halted, Reaped}
     runtime[].flags.toggle(NotHalted, Halted)
     runtime[].flags.toggle(NotReaped, Reaped)
     wakeMask(runtime[].flags, {Halted, Reaped})
