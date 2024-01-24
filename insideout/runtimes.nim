@@ -304,8 +304,9 @@ proc spawn[A, B](runtime: var RuntimeObj[A, B]; factory: Factory[A, B]; mailbox:
   ## add compute to mailbox
   runtime.factory = factory
   runtime.mailbox = mailbox
-  store(runtime.flags, toFlags[FlagT, RuntimeFlag]({}),
-    order = moSequentiallyConsistent)
+  store(runtime.flags,
+        toFlags[FlagT, RuntimeFlag]({NotHalted, NotReaped, NotFrozen}),
+        order = moSequentiallyConsistent)
   assertReady runtime
   var attr {.noinit.}: PThreadAttr
   spawnCheck pthread_attr_init(addr attr)
