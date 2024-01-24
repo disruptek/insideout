@@ -181,12 +181,8 @@ type
 proc teardown[A, B](p: pointer) {.noconv.} =
   block:
     var runtime = cast[Runtime[A, B]](p)
-    if not runtime[].continuation.isNil:
-      if not runtime[].continuation.mom.isNil:
-        reset runtime[].continuation.mom
-      reset runtime[].continuation
-    if not runtime[].mailbox.isNil:
-      reset runtime[].mailbox
+    `=destroy`(runtime[].mailbox)
+    `=destroy`(runtime[].continuation)
     runtime[].setState(Stopped)
     runtime[].flags.toggle(NotHalted, Halted)
     runtime[].flags.toggle(NotReaped, Reaped)
@@ -232,7 +228,6 @@ proc dispatcher[A, B](runtime: sink Runtime[A, B]) =
   pthread_cleanup_push(teardown[A, B], runtime.address)
 
   block:
-    const name: cstring = $A
     var phase = 0
     while true:
       case runtime.state
@@ -251,7 +246,7 @@ proc dispatcher[A, B](runtime: sink Runtime[A, B]) =
         of 2:
           when insideoutRenameThread:
             result =
-              pthread_setname_np(runtime[].handle, name)
+              pthread_setname_np(runtime[].handle, $A)
         else:
           runtime[].setState(Running)
         if result == 0:
