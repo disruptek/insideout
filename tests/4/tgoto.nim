@@ -3,13 +3,13 @@ import std/os
 import pkg/cps
 import pkg/insideout
 
-proc visit(home, away: Mailbox[Continuation]) {.cps: Continuation.} =
+proc visit(home, away: UnboundedFifo[Continuation]) {.cps: Continuation.} =
   echo "i am @ ", getThreadId()
   goto away
   echo "i am @ ", getThreadId()
   echo "leaving visit"
 
-proc server(box: Mailbox[Continuation]) {.cps: Continuation.} =
+proc server(box: UnboundedFifo[Continuation]) {.cps: Continuation.} =
   while true:
     sleep 1000
     var visitor: Continuation
@@ -29,9 +29,9 @@ proc server(box: Mailbox[Continuation]) {.cps: Continuation.} =
 
 const Service = whelp server
 
-proc application(home: Mailbox[Continuation]) {.cps: Continuation.} =
+proc application(home: UnboundedFifo[Continuation]) {.cps: Continuation.} =
   echo "i am @ ", getThreadId()
-  var away = newMailbox[Continuation]()
+  var away = newUnboundedFifo[Continuation]()
   var service = Service.spawn(away)
   visit(home, away)
   sleep 100
@@ -56,7 +56,7 @@ proc application(home: Mailbox[Continuation]) {.cps: Continuation.} =
 
 proc main =
   block:
-    var home = newMailbox[Continuation]()
+    var home = newUnboundedFifo[Continuation]()
     var c = Continuation: whelp application(home)
     discard trampoline(move c)
     doAssert c.isNil

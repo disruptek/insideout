@@ -21,12 +21,11 @@ template check(expr: untyped): untyped =
   check(expr, "ok")
 
 proc main =
-  var box: Mailbox[RI]
   var receipt: RI
   block:
     ## send a million messages
     const N = 1_000_000
-    box = newMailbox[RI](N)
+    var box = newMailbox[RI](N)
     for i in 0 ..< N:
       box.send i.ri
     for i in 0 ..< N:

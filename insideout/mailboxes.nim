@@ -16,31 +16,37 @@ import insideout/ward
 export WardFlag
 
 type
-  MailboxObj[T] = object
+  BoundedFifoObj[T] = object
     when T isnot void:
-      ward: UnBoundedWard[T]
-      queue: LoonyQueue[T]
+      ward: BoundedWard[T]
+  BoundedFifo*[T] {.requiresInit.} = AtomicRef[BoundedFifoObj[T]]
+  UnboundedFifoObj[T] = object
+    when T isnot void:
+      ward: UnboundedWard[T]
+  UnboundedFifo*[T] {.requiresInit.} = AtomicRef[UnboundedFifoObj[T]]
 
-  Mailbox*[T] {.requiresInit.} = AtomicRef[MailboxObj[T]]
+  MailboxObj[T] = BoundedFifoObj[T] or UnboundedFifoObj[T]
+  Mailbox*[T] = BoundedFifo[T] or UnboundedFifo[T]
 
-proc `=copy`*[T](dest: var MailboxObj[T]; src: MailboxObj[T]) {.error.}
+proc `=copy`*[T](dest: var BoundedFifoObj[T]; src: BoundedFifoObj[T]) {.error.}
+proc `=copy`*[T](dest: var UnboundedFifoObj[T]; src: UnboundedFifoObj[T]) {.error.}
 
-proc `=destroy`[T](box: var MailboxObj[T]) =
+proc `=destroy`[T](box: var BoundedFifoObj[T]) =
   mixin `=destroy`
   when T isnot void:
-    if not box.queue.isNil:
-      clear box.ward             # best-effort free of items in the queue
-      `=destroy`(box.ward)       # destroy the ward
-      `=destroy`(box.queue)      # destroy the queue
+    clear box.ward             # best-effort free of items in the queue
+    `=destroy`(box.ward)       # destroy the ward
+
+proc `=destroy`[T](box: var UnboundedFifoObj[T]) =
+  mixin `=destroy`
+  when T isnot void:
+    clear box.ward             # best-effort free of items in the queue
+    `=destroy`(box.ward)       # destroy the ward
 
 proc hash*(mail: var Mailbox): Hash =
   ## whatfer inclusion in a table, etc.
   mixin address
   hash cast[int](address mail)
-
-const
-  MissingMailbox* = default(Mailbox[void])  ##
-  ## a mailbox equal to all other uninitialized mailboxes
 
 proc `==`*[A, B](a: Mailbox[A]; b: Mailbox[B]): bool =
   ## two mailboxes are identical if they have the same hash
@@ -66,22 +72,25 @@ else:
     if unlikely mail.isNil:
       raise AssertionDefect.newException "mailbox uninitialized"
 
-proc newMailbox*[T](): Mailbox[T] =
-  ## create a new mailbox of unbounded size
+proc newUnboundedFifo*[T](): UnboundedFifo[T] =
+  ## create a new unbounded fifo
   new result
   when T isnot void:
-    result[].queue = newLoonyQueue[T]()
-    initWard(result[].ward, result[].queue)
+    initWard(result[].ward, newLoonyQueue[T]())
 
-proc newMailbox*[T](initialSize: Positive): Mailbox[T] =
+proc newBoundedFifo*[T](initialSize: Positive): BoundedFifo[T] =
   ## create a new mailbox which can hold `initialSize` items
   new result
   when T isnot void:
-    result[].queue = newLoonyQueue[T]()
-    when result[].ward is BoundedWard[T]:
-      initWard(result[].ward, result[].queue, initialSize)
-    else:
-      initWard(result[].ward, result[].queue)
+    initWard(result[].ward, newLoonyQueue[T](), initialSize)
+
+template newMailbox*[T](): UnboundedFifo[T] =
+  ## create a new mailbox of unbounded size
+  newUnboundedFifo[T]()
+
+template newMailbox*[T](initialSize: Positive): BoundedFifo[T] =
+  ## create a new mailbox with finite size
+  newBoundedFifo[T](initialSize)
 
 proc flags*[T](mail: Mailbox[T]): set[WardFlag] =
   ## return the current state of the mailbox
@@ -120,7 +129,7 @@ proc send*[T](mail: Mailbox[T]; item: sink T) =
   ## blocking push of an item into the mailbox
   assertInitialized mail
   when not defined(danger):
-    if item.isNil:
+    if unlikely item.isNil:
       raise ValueError.newException "nil message"
   while true:
     case push(mail[].ward, item)
@@ -135,8 +144,9 @@ proc trySend*[T](mail: Mailbox[T]; item: sink T): WardFlag =
   ## non-blocking attempt to push an item into the mailbox;
   ## true if it worked
   assertInitialized mail
-  if item.isNil:
-    raise ValueError.newException "attempt to send nil"
+  when not defined(danger):
+    if unlikely item.isNil:
+      raise ValueError.newException "attempt to send nil"
   let flags = mail.flags
   if Writable notin flags:
     Writable

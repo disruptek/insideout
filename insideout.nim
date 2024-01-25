@@ -36,7 +36,6 @@ proc goto*[T](continuation: var T; where: Mailbox[T]): T {.cpsMagic.} =
   ## move the current continuation to another compute domain
   # we want to be sure that a future destroy finds nothing,
   # so we move the continuation and then send /that/ ref.
-  #var message = move continuation
   where.send(move continuation)
   result = nil.T
 
@@ -52,7 +51,7 @@ macro createWaitron*(A: typedesc; B: typedesc): untyped =
       "waitron " & repr(A) & " To " & repr(B)
   name.copyLineInfo(A)
   genAstOpt({}, name, A, B):
-    proc name(box: Mailbox[B]) {.cps: A.} =
+    proc name(box: UnboundedFifo[B]) {.cps: A.} =
       ## generic mailbox consumer
       mixin cooperate
       while true:
@@ -84,18 +83,18 @@ const
 
 type
   ComeFrom = ref object of Continuation
-    reply: Mailbox[Continuation]
+    reply: UnboundedFifo[Continuation]
 
 proc landing(c: sink Continuation): Continuation =
   goto(c.mom, (ComeFrom c).reply)
 
-proc comeFrom*[T](c: var T; into: Mailbox[T]): Continuation {.cpsMagic.} =
+proc comeFrom*[T](c: var T; into: UnboundedFifo[T]): Continuation {.cpsMagic.} =
   ## move the continuation to the given mailbox; control
   ## resumes in the current thread when successful
 
   # NOTE: the mom, which is Continuation, defines the reply mailbox type;
   #       thus, the return value of comeFrom()
-  var reply = newMailbox[Continuation](1)
+  var reply = newMailbox[Continuation]()
   c.mom = ComeFrom(fn: landing, mom: move c.mom, reply: reply)
   discard goto(c, into)
   result = recv reply
@@ -105,6 +104,6 @@ proc novelThread*[T](c: var T): T {.cpsMagic.} =
   ## in the current thread when complete
   ## NOTE: specifying `T` goes away if cps loses color
   const Waiter = createWaitron(T, T)
-  var mailbox = newMailbox[T](1)
+  var mailbox = newMailbox[T]()
   var runtime = spawn(Waiter, mailbox)
   result = cast[T](comeFrom(c, mailbox))
