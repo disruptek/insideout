@@ -22,7 +22,7 @@ proc shout(message: string) {.cps: Continuation.} =
 const Factory = whelp server
 
 proc main =
-  var queue = newUnboundedFifo[Continuation]()
+  var queue = newMailbox[Continuation]()
   queue.send:
     whelp sing("hello, world!")
 

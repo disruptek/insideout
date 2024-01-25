@@ -23,7 +23,7 @@ type
   InsideError* = object of OSError
   SpawnError* = object of InsideError
   Dispatcher* = proc(p: pointer): pointer {.noconv.}
-  Factory[A, B] = proc(mailbox: UnboundedFifo[B]) {.cps: A.}
+  Factory*[A, B] = proc(mailbox: UnboundedFifo[B]) {.cps: A.}
 
   RuntimeFlag* = enum
     Frozen
@@ -53,7 +53,7 @@ type
     continuation: A
     error: ref Exception
 
-  Runtime*[A, B] {.requiresInit.} = AtomicRef[RuntimeObj[A, B]]
+  Runtime*[A, B] = AtomicRef[RuntimeObj[A, B]]
 
 proc `=copy`*[A, B](runtime: var RuntimeObj[A, B]; other: RuntimeObj[A, B]) {.error.} =
   ## copies are denied

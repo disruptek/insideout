@@ -1,5 +1,6 @@
 # TODO:
 # epoll_pwait +/- timeout
+import std/atomics
 import std/selectors
 import std/monotimes
 import std/posix
@@ -8,23 +9,27 @@ import pkg/cps
 
 import pkg/trees/avl
 
+import insideout/atomic/refs
+
 type
-  Id* = distinct cint
+  Id* = distinct culonglong
   Fd* = distinct cint
 
-  EventQueue* = object
-    selector: Selector[Fd]
+  EventQueueObj = object
+    selector: Fd
     registry: AVLTree[Id, ptr EpollData]
     interrupt: Fd
     interruptId: Id
     interest: Fd
-    lastId: Id
+    nextId: Atomic[uint64]
+
+  EventQueue* = AtomicRef[EventQueueObj]
 
   EpollData = object
     c: Continuation
     fd: Fd
+    pad: int32
     id: Id
-    pad: uint64
 
   State = enum
     Newborn
@@ -89,11 +94,11 @@ const
   invalidId: Id = 0.Id
   invalidFd: Fd = -1.Fd
 
-var eq {.threadvar.}: EventQueue
+proc `=copy`*[T](dest: var EventQueueObj; src: EventQueueObj) {.error.}
 
 proc state(eq: EventQueue): State =
   ## compute the state of the event queue
-  if eq.selector.isNil:
+  if eq.isNil:
     Newborn
   #elif eq.registry.len == 0:
   #  Pending
@@ -136,9 +141,8 @@ proc interruptor() {.cps: Continuation.} =
     echo "interrupt " & $i
     waitForInterrupt()
 
-proc register[T](c: var T; fd: Fd; events: set[Event]): Id =
-  inc eq.lastId
-  result = eq.lastId
+proc register[T](eq: EventQueue; c: var T; fd: Fd; events: set[Event]): Id =
+  result = fetchAdd(eq[].nextId, 1, order = moSequentiallyConsistent).Id
   var data = newEpollData(c, fd, result)
   var ev: epoll_event
   # defaults; ERROR and HANGUP are implicit
@@ -155,18 +159,19 @@ proc register[T](c: var T; fd: Fd; events: set[Event]): Id =
   else:
     raise Defect.newException "specify Edge or Level"
   ev.data = cast[ptr epoll_data_t](data)
-  let e = epoll_ctl(eq.interest.cint, EPOLL_CTL_ADD, fd.cint, addr ev)
+  let e = epoll_ctl(eq[].interest.cint, EPOLL_CTL_ADD, fd.cint, addr ev)
   doAssert e == 0
   # TODO: store id -> fd ?
   # eq.registry.insert(result, data)
 
-proc init() =
-  if eq.state == Newborn:
-    eq.interest = epoll_create(O_CLOEXEC)
-    eq.interrupt = eventfd(0, O_NONBLOCK or O_CLOEXEC)
+proc init(eq: var EventQueue) =
+  if eq.isNil:
+    new eq
+    eq[].interest = epoll_create(O_CLOEXEC)
+    eq[].interrupt = eventfd(0, O_NONBLOCK or O_CLOEXEC)
 
     var c = whelp interruptor()
-    eq.interruptId = register(c, eq.interrupt, {Read, Edge})
+    eq[].interruptId = register(eq, c, eq[].interrupt, {Read, Edge})
     #assert eq.interruptId in eq.registry
 
     # registering a fd returns an id to the continuation. when a fd is
@@ -191,17 +196,17 @@ proc handleError() =
   else:
     raise Defect.newException "epoll_wait: " & $errno
 
-proc run*(timeout: cint = 1) =
+proc run*(eq: var EventQueue; timeout: cint = 1) =
   case eq.state
   of Newborn:
-    init()
+    init eq
   of Pending:
     #raise Defect.newException "unlikely"
     discard
   of Running:
     discard
   var event: epoll_event
-  let e = epoll_wait(eq.interest.cint, addr event, 1, -1)
+  let e = epoll_wait(eq[].interest.cint, addr event, 1, -1)
   if e == 0:
     echo "timeout or interrupted"
   elif e == -1:
@@ -225,12 +230,12 @@ proc run*(timeout: cint = 1) =
     if 0 != (event.events and EPOLLHUP.ord):
       events.incl Hangup
 
-proc teardown() =
+proc teardown(eq: EventQueue) =
   case eq.state
   of Newborn:
     discard
   else:
-    while EINTR == close eq.interest:
+    while EINTR == close eq[].interest:
       discard
     #let e = epoll_ctl(eq.interest, EPOLL_CTL_ADD, fd, addr ev)
 

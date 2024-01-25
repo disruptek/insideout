@@ -56,10 +56,10 @@ proc initWard*[T](ward: var BoundedWard[T]; queue: LoonyQueue[T];
         order=moSequentiallyConsistent)
   ward.queue = queue
 
-proc newUnboundedQueue*[T](): UnboundedWard[T] =
+proc newUnboundedWard*[T](): UnboundedWard[T] =
   initWard(result, newLoonyQueue[T]())
 
-proc newBoundedQueue*[T](size: Natural = defaultInitialSize): BoundedWard[T] =
+proc newBoundedWard*[T](size: Natural = defaultInitialSize): BoundedWard[T] =
   initWard(result, newLoonyQueue[T](), size = size)
 
 proc performWait(ward: var Ward; wants: set[WardFlag]): bool {.discardable.} =

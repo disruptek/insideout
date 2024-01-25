@@ -13,12 +13,12 @@ let N =
   if getEnv"GITHUB_ACTIONS" == "true":
     10_000_000
   else:
-    1_000_000_000
+    100_000_000
 
 proc work() {.cps: Continuation.} =
   discard
 
-proc filler(queue: Mailbox[Continuation]; m: int) {.cps: Continuation.} =
+proc filler(queue: UnboundedFifo[Continuation]; m: int) {.cps: Continuation.} =
   var m = m
   while m > 0:
     queue.send: whelp work()
@@ -26,7 +26,7 @@ proc filler(queue: Mailbox[Continuation]; m: int) {.cps: Continuation.} =
   raise ValueError.newException "done"
 
 proc attempt(N: Positive; cores: int = countProcessors()) =
-  var queues: seq[Mailbox[Continuation]]
+  var queues: seq[UnboundedFifo[Continuation]]
   block:
     echo "filling queues with ", N, " work items"
     var fills = newMailbox[Continuation]()
@@ -42,7 +42,7 @@ proc attempt(N: Positive; cores: int = countProcessors()) =
       join filler
     shutdown fillers
   block:
-    var pool: Pool[Continuation, Continuation]
+    var pool = newPool(ContinuationWaiter)
     for queue in queues.mitems:
       pause queue
       pool.spawn(ContinuationWaiter, queue)

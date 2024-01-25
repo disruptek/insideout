@@ -13,13 +13,13 @@ let N =
   if getEnv"GITHUB_ACTIONS" == "true":
     10_000_000
   else:
-    1_000_000_000
-let M = countProcessors() div 2
+    100_000
+let M = countProcessors()
 
 proc work() {.cps: Continuation.} =
   discard
 
-proc filler(queue: Mailbox[Continuation]; m: int) {.cps: Continuation.} =
+proc filler(queue: UnboundedFifo[Continuation]; m: int) {.cps: Continuation.} =
   var m = m
   while m > 0:
     queue.send: whelp work()

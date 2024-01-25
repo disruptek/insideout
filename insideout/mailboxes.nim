@@ -19,11 +19,11 @@ type
   BoundedFifoObj[T] = object
     when T isnot void:
       ward: BoundedWard[T]
-  BoundedFifo*[T] {.requiresInit.} = AtomicRef[BoundedFifoObj[T]]
+  BoundedFifo*[T] = AtomicRef[BoundedFifoObj[T]]
   UnboundedFifoObj[T] = object
     when T isnot void:
       ward: UnboundedWard[T]
-  UnboundedFifo*[T] {.requiresInit.} = AtomicRef[UnboundedFifoObj[T]]
+  UnboundedFifo*[T] = AtomicRef[UnboundedFifoObj[T]]
 
   MailboxObj[T] = BoundedFifoObj[T] or UnboundedFifoObj[T]
   Mailbox*[T] = BoundedFifo[T] or UnboundedFifo[T]

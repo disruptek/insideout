@@ -30,7 +30,7 @@ const Service = whelp server
 
 proc application(home: UnboundedFifo[Continuation]) {.cps: Continuation.} =
   echo "i am @ ", getThreadId(), " (home)"
-  var away = newUnboundedFifo[Continuation]()
+  var away = newMailbox[Continuation]()
   var service = Service.spawn(away)
   echo "i am @ ", getThreadId(), " (home)"
   visit(home, away)
@@ -45,7 +45,7 @@ proc application(home: UnboundedFifo[Continuation]) {.cps: Continuation.} =
 
 proc main =
   block:
-    var home = newUnboundedFifo[Continuation]()
+    var home = newMailbox[Continuation]()
     var c = Continuation: whelp application(home)
     discard trampoline(move c)
     doAssert c.isNil
