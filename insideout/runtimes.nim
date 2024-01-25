@@ -181,12 +181,8 @@ type
 proc teardown[A, B](p: pointer) {.noconv.} =
   block:
     var runtime = cast[Runtime[A, B]](p)
-    if not runtime[].continuation.isNil:
-      if not runtime[].continuation.mom.isNil:
-        reset runtime[].continuation.mom
-      reset runtime[].continuation
-    if not runtime[].mailbox.isNil:
-      reset runtime[].mailbox
+    reset runtime[].continuation
+    reset runtime[].mailbox
     runtime[].setState(Stopped)
     runtime[].flags.toggle(NotHalted, Halted)
     runtime[].flags.toggle(NotReaped, Reaped)
