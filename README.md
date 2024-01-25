@@ -30,6 +30,12 @@ from thread to thread than it is to move arbitrary data.
 
 Adequate.
 
+## Efficiency
+
+Empty continuations are 40-bytes each.  Queue overhead is 10-bytes per object.
+One billion queued continuations thus occupies 50gb of memory.  Executing
+1,000,000,000 unique continuations on my 32-thread machine takes ~3 seconds.
+
 ## Support
 
 insideout supports `define:useMalloc`, `mm:arc`, `backend:c`,
