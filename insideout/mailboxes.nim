@@ -107,7 +107,7 @@ proc recv*[T](mail: Mailbox[T]): T =
     of Writable:
       break
     of Readable:
-      raise ValueError.newException "write-only mailbox"
+      raise ValueError.newException "unreadable mailbox"
     else:
       discard
 
@@ -136,7 +136,7 @@ proc send*[T](mail: Mailbox[T]; item: sink T) =
     of Readable:
       break
     of Writable:
-      raise ValueError.newException "read-only mailbox"
+      raise ValueError.newException "unwritable mailbox"
     else:
       discard
 
