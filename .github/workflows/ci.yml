@@ -119,7 +119,7 @@ jobs:
         run: |
           cd project
           cd examples
-          balls '***' --path=".." \
+          balls '.*' --path=".." \
                 --backend:c --panics:on \
                 --mm:arc --define:useMalloc \
                 --define:debug --define:release --define:danger
