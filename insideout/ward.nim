@@ -141,9 +141,13 @@ proc push*[T](ward: var Ward[T]; item: var T): WardFlag =
     of Readable, Writable:
       break
     of Full:
-      discard ward.performWait({NotWritable, NotFull})
+      if not ward.performWait({NotWritable, NotFull}):
+        result = Writable
+        break
     of Paused:
-      discard ward.performWait({NotWritable, NotPaused})
+      if not ward.performWait({NotWritable, NotPaused}):
+        result = Writable
+        break
     else:
       discard
 
@@ -187,9 +191,13 @@ proc pop*[T](ward: var Ward[T]; item: var T): WardFlag =
     of Readable, Writable:
       break
     of Empty:
-      discard ward.performWait({NotReadable, NotEmpty})
+      if not ward.performWait({NotReadable, NotEmpty, NotWritable}):
+        result = Readable
+        break
     of Paused:
-      discard ward.performWait({NotReadable, NotPaused})
+      if not ward.performWait({NotReadable, NotPaused}):
+        result = Readable
+        break
     else:
       discard
 
