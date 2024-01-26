@@ -2,3 +2,4 @@ nim.cfg
 bin
 deps
 .tool-versions
+examples/data/output.txt

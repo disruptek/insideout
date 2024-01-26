@@ -54,6 +54,7 @@ proc recomposer(input: Port; output: Port; size: Positive) {.cps: Continuation.}
         line.add ip[]
       debugEcho "rc=> ", line
     except ValueError:
+      output.send(ip line)
       break
   disablePush output
   debugEcho getThreadId(), " recomposer stopping"
@@ -94,4 +95,12 @@ proc main(input: string; output: string; size: Positive = 80) =
     join component
   debugEcho "network complete"
 
-main("data/input.txt", "data/output.txt", size = 60)
+let input = "data/input.txt"
+let output = "data/output.txt"
+main(input, output, size = 40)
+debugEcho "\n"
+for line in input.lines:
+  debugEcho line
+debugEcho "\n"
+for line in output.lines:
+  debugEcho line
