@@ -125,7 +125,7 @@ proc performPush[T](ward: var BoundedWard[T]; item: sink T): WardFlag =
 
 proc tryPush*[T](ward: var Ward[T]; item: var T): WardFlag =
   let flags = toFlags[FlagT, WardFlag](ward.state)
-  if Writable notin flags:
+  if NotWritable in flags:
     result = Writable
   elif Full in flags:
     result = Full
@@ -171,7 +171,7 @@ proc performPop[T](ward: var BoundedWard[T]; item: var T): WardFlag =
 
 proc tryPop*[T](ward: var Ward[T]; item: var T): WardFlag =
   let flags = toFlags[FlagT, WardFlag](ward.state)
-  if Readable notin flags:
+  if NotReadable in flags:
     result = Readable
   elif Empty in flags:
     result = Empty
