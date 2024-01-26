@@ -9,7 +9,6 @@ on:
     branches:
       - '*'
 
-
 jobs:
   changes:
     # Disable the filter on scheduled runs because we don't want to skip those
@@ -66,29 +65,30 @@ jobs:
         with:
           path: project
 
-      - name: Compiler (nim)
+      - name: Nim
         if: matrix.compiler.name == 'nim'
         uses: alaviss/setup-nim@0.1.1
         with:
           path: nim
           version: ${{ matrix.compiler.version }}
 
-      - name: Compiler (nimskull)
+      - name: Nimskull
+        id: nimskull
         if: matrix.compiler.name == 'nimskull'
         uses: alaviss/setup-nimskull@f6e8ade8ac51191024616216e5da0ee968d9da48
         with:
           version: ${{ matrix.compiler.version }}
 
-      - if: matrix.compiler.name == 'nimskull'
-        name: Fetch nimble's fork for nimskull
+      - name: Fetch Nimble
+        if: matrix.compiler.name == 'nimskull'
         uses: actions/checkout@v4
         with:
           path: nimble
           repository: alaviss/nimble
           ref: nimskull
 
-      - if: matrix.compiler.name == 'nimskull'
-        name: Build nimble and add to PATH
+      - name: Build Nimble
+        if: matrix.compiler.name == 'nimskull'
         shell: bash
         run: |
           cd nimble
