@@ -52,8 +52,13 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest]
-        nim: [devel]
-    name: '${{ matrix.os }} (${{ matrix.nim }})'
+        compiler:
+          #- name: nim
+          #  version: devel
+          - name: nimskull
+            version: "*"
+
+    name: '${{ matrix.os }} (${{ matrix.compiler.name }} ${{ matrix.compiler.version }})'
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
@@ -61,11 +66,38 @@ jobs:
         with:
           path: project
 
-      - name: Setup Nim
+      - name: Compiler (nim)
+        if: matrix.compiler.name == 'nim'
         uses: alaviss/setup-nim@0.1.1
         with:
           path: nim
-          version: ${{ matrix.nim }}
+          version: ${{ matrix.compiler.version }}
+
+      - name: Compiler (nimskull)
+        if: matrix.compiler.name == 'nimskull'
+        uses: alaviss/setup-nimskull@f6e8ade8ac51191024616216e5da0ee968d9da48
+        with:
+          version: ${{ matrix.compiler.version }}
+
+      - if: matrix.compiler.name == 'nimskull'
+        name: Fetch nimble's fork for nimskull
+        uses: actions/checkout@v4
+        with:
+          path: nimble
+          repository: alaviss/nimble
+          ref: nimskull
+
+      - if: matrix.compiler.name == 'nimskull'
+        name: Build nimble and add to PATH
+        shell: bash
+        run: |
+          cd nimble
+          nim c -d:release -o:nimble src/nimble.nim
+          cp nimble "$NIMSKULL_BIN/nimble"
+          # Add nimble binary folder to PATH too
+          echo "$HOME/.nimble/bin" >> $GITHUB_PATH
+        env:
+          NIMSKULL_BIN: ${{ steps.nimskull.outputs.binPath }}
 
 #     - name: Valgrind
 #       shell: bash
@@ -79,6 +111,8 @@ jobs:
           cd project
           nimble --accept develop
           nimble --accept install "https://github.com/disruptek/balls"
+        env:
+          NIM: ${{ matrix.compiler.name }}
 
       - name: Examples
         shell: bash
@@ -89,6 +123,8 @@ jobs:
                 --backend:c --panics:on \
                 --mm:arc --define:useMalloc \
                 --define:debug --define:release --define:danger
+        env:
+          NIM: ${{ matrix.compiler.name }}
 
       - name: Tests
         shell: bash
