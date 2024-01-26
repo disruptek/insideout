@@ -3,8 +3,8 @@ import std/strutils
 
 import pkg/cps
 
-import pkg/insideout/runtimes
-import pkg/insideout/mailboxes
+import insideout/runtimes
+import insideout/mailboxes
 
 type
   Service = Runtime[Continuation, Continuation]

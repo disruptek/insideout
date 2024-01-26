@@ -1,4 +1,4 @@
-import pkg/insideout/atomic/flags
+import insideout/atomic/flags
 
 type
   Lamp = enum

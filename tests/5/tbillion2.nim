@@ -23,7 +23,6 @@ proc filler(queue: UnboundedFifo[Continuation]; m: int) {.cps: Continuation.} =
   while m > 0:
     queue.send: whelp work()
     dec m
-  raise ValueError.newException "done"
 
 proc attempt(N: Positive; cores: int = countProcessors()) =
   var queues: seq[UnboundedFifo[Continuation]]
@@ -37,7 +36,7 @@ proc attempt(N: Positive; cores: int = countProcessors()) =
         whelp q.filler(N div cores)
       queues.add q
       dec m
-    var fillers = newPool(ContinuationWaiter, fills, initialSize = cores)
+    var fillers = newPool(ContinuationRunner, fills, initialSize = cores)
     for filler in fillers.mitems:
       join filler
     shutdown fillers

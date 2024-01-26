@@ -1,4 +1,4 @@
-import pkg/insideout/semaphores
+import insideout/semaphores
 
 proc main =
   var s: Semaphore
