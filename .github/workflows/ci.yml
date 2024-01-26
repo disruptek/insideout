@@ -80,7 +80,17 @@ jobs:
           nimble --accept develop
           nimble --accept install "https://github.com/disruptek/balls"
 
-      - name: Run tests
+      - name: Examples
+        shell: bash
+        run: |
+          cd project
+          cd examples
+          balls '***' --path=".." \
+                --backend:c --panics:on \
+                --mm:arc --define:useMalloc \
+                --define:debug --define:release --define:danger
+
+      - name: Tests
         shell: bash
         run: |
           cd project
