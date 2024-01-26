@@ -52,7 +52,7 @@ macro createWaitron*(A: typedesc; B: typedesc): untyped =
   name.copyLineInfo(A)
   genAstOpt({}, name, A, B):
     proc name(box: UnboundedFifo[B]) {.cps: A.} =
-      ## generic mailbox consumer
+      ## continuously consume and run `B` continuations
       mixin cooperate
       while true:
         var c: Continuation
@@ -78,8 +78,27 @@ macro createWaitron*(A: typedesc; B: typedesc): untyped =
 
     whelp name
 
+macro createRunner*(A: typedesc; B: typedesc): untyped =
+  ## Create a dispatcher, itself an `A` continuation,
+  ## which runs a single `B` continuation and terminates.
+  let name =
+    nskProc.genSym:
+      "runner " & repr(A) & " To " & repr(B)
+  name.copyLineInfo(A)
+  genAstOpt({}, name, A, B):
+    proc name(box: UnboundedFifo[B]) {.cps: A.} =
+      ## run a single `B` continuation
+      mixin cooperate
+      var c: Continuation = box.recv()
+      while c.running:
+        c = bounce c
+        cooperate()
+
+    whelp name
+
 const
   ContinuationWaiter* = createWaitron(Continuation, Continuation)
+  ContinuationRunner* = createRunner(Continuation, Continuation)
 
 type
   ComeFrom = ref object of Continuation
