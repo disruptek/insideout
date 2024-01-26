@@ -151,21 +151,33 @@ proc push*[T](ward: var Ward[T]; item: var T): WardFlag =
     else:
       discard
 
+proc markEmpty[T](ward: var Ward[T]): WardFlag =
+  ## mark the ward as empty; if it's also unwritable,
+  ## then mark it as unreadable and wake everyone up.
+  let flags = toFlags[FlagT, WardFlag](ward.state)
+  if NotWritable in flags:
+    result = Readable
+    var woke = false
+    woke = woke or ward.toggle(NotEmpty, Empty)
+    woke = woke or ward.toggle(Readable, NotReadable)
+    if woke:
+      wakeMask(ward.state, {Empty, NotReadable, NotWritable})
+  else:
+    result = Empty
+    if ward.toggle(NotEmpty, Empty):
+      discard wakeMask(ward.state, {Empty}, 1)
+
 proc performPop[T](ward: var UnboundedWard[T]; item: var T): WardFlag =
   item = pop(ward.queue)
   if item.isNil:
-    result = Empty
-    if ward.toggle(NotEmpty, Empty):
-      wakeMask(ward.state, {Empty}, 1)
+    result = ward.markEmpty()
   else:
     result = Writable
 
 proc performPop[T](ward: var BoundedWard[T]; item: var T): WardFlag =
   item = pop(ward.queue)
   if item.isNil:
-    result = Empty
-    if ward.toggle(NotEmpty, Empty):
-      discard wakeMask(ward.state, {Empty}, 1)
+    result = ward.markEmpty()
   else:
     result = Writable
     let count = fetchAdd(ward.size, 1, order = moSequentiallyConsistent)
