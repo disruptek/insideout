@@ -15,7 +15,7 @@ proc check(expr: bool; s: string) =
   if expr:
     debugEcho s
   else:
-    raise AssertionError.newException "rip"
+    raise AssertionDefect.newException "rip"
 
 template check(expr: untyped): untyped =
   check(expr, "ok")

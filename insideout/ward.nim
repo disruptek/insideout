@@ -23,20 +23,34 @@ type
     queue: LoonyQueue[T]
     size: Atomic[int]
 
+proc pause*[T](ward: var Ward[T])
+
 proc initWard*[T](ward: var Ward[T]; queue: LoonyQueue[T]) =
   const flags =
     <<{Writable, Readable, Empty} + <<!{Full, Paused, Bounded}
+  # support reinitialization
+  if not ward.queue.isNil:
+    pause ward
+    while ward.queue.pop.isNil:
+      discard
+    reset ward.queue
+  store(ward.size, 0, order=moSequentiallyConsistent)
   store(ward.state, flags, order=moSequentiallyConsistent)
   ward.queue = queue
 
 proc initWard*[T](ward: var Ward[T]; queue: LoonyQueue[T];
                          size: Positive) =
-  var flags = <<{Writable, Readable, Empty, Bounded} + <<!Paused
-  if 0 == size:
-    flags ||= <<Full
-  else:
-    flags ||= <<!Full
+  const flags = <<{Writable, Readable, Empty, Bounded} + <<!{Paused, Full}
+  # support reinitialization
+  if not ward.queue.isNil:
+    pause ward
+    while ward.queue.pop.isNil:
+      discard
+    reset ward.queue
   store(ward.state, flags, order=moSequentiallyConsistent)
+  {.warning: "rare case, lazy; could save a store here".}
+  if 0 == size:
+    ward.state.enable Full
   store(ward.size, size, order=moSequentiallyConsistent)
   ward.queue = queue
 

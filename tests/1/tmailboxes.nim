@@ -30,41 +30,41 @@ proc main =
   var receipt: RS
   block balls_breaks_destructor_semantics:
     block:
-      ## basic unbounded
+      echo "basic unbounded"
       var box = newMailbox[RS]()
       var bix = box
       check not box.isNil
       check box.owners == 2
       check box == bix
-      box.assertInitialized
+      check not bix.isNil
     block:
-      ## basic bounded
+      echo "basic bounded"
       var box = newMailbox[RS](2)
       var bix = newMailbox[RS](2)
       check box != bix
       check box.owners == 1
       bix = box
       check box.owners == 2
-      bix.assertInitialized
+      check not bix.isNil
       check bix.owners == 2
     block:
-      ## send A
+      echo "send A"
       var box = newMailbox[RS]()
       var message = rs"hello"
       box.send message
     block:
-      ## recv B
+      echo "recv B"
       var box = newMailbox[RS]()
       var message = rs"hello"
       box.send message
       message = rs"unlikely"
       var bix = box
-      check Empty notin box.flags
+      check not box.isEmpty
       message = bix.recv
       check message == rs"hello"
       check Empty == tryRecv(box, receipt)
     block:
-      ## recv A
+      echo "recv A"
       var message: RS
       var box = newMailbox[RS]()
       box.send rs"hello"
@@ -75,7 +75,7 @@ proc main =
       check message == "goodbye"
       check Empty == tryRecv(box, receipt)
     block:
-      ## try modes
+      echo "try modes"
       var box = newMailbox[RS](2)
       var one = rs"one"
       var two = rs"two"
@@ -88,7 +88,7 @@ proc main =
       check box.tryRecvSuccess(message)
       check not box.tryRecvSuccess(message)
     block:
-      ## destructors
+      echo "destructors"
       var box = newMailbox[RS]()
       var bix = box
       check box.owners == 2, "expected 2 owners; it's " & $box.owners
