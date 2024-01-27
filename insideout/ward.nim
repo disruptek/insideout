@@ -40,7 +40,8 @@ proc initWard*[T](ward: var Ward[T]; queue: LoonyQueue[T]) =
 
 proc initWard*[T](ward: var Ward[T]; queue: LoonyQueue[T];
                          size: Positive) =
-  const flags = <<{Writable, Readable, Empty, Bounded} + <<!{Paused, Full}
+  const flags =
+    <<{Writable, Readable, Empty, Bounded} + <<!{Paused, Full}
   # support reinitialization
   if not ward.queue.isNil:
     pause ward
