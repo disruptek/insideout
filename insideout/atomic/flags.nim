@@ -1,6 +1,7 @@
 # atomic bitset for generic enums
-import std/macros
 import std/atomics
+import std/genasts
+import std/macros
 
 import insideout/futex
 export checkWait
@@ -8,92 +9,91 @@ export checkWait
 # this is a bit loony but we want to support nimskull, so...
 
 type
-  AtomicFlags*[T] = Atomic[T]
-
-macro getFlags*[T](flags: var AtomicFlags[T]): T =
-  newCall(bindSym"load", flags, bindSym"moSequentiallyConsistent")
+  AtomicFlags16* = Atomic[uint16]
+  AtomicFlags32* = Atomic[uint32]
+  AtomicFlags = AtomicFlags16 or AtomicFlags32
 
 template flagType*(flag: typedesc): untyped =
-  when sizeof(flag) <= 2:
-    uint32 # uint16
-  elif sizeof(flag) <= 4:
+  when sizeof(flag) <= 1:
+    uint16
+  elif sizeof(flag) <= 2:
     uint32
   else:
-    {.error: "bad idea".}
+    {.error: "supported flag sizes are 1 and 2 bytes".}
 
-template flagType*[V](flag: V): untyped =
+template flagType*[V: enum](flag: V): untyped =
   flagType(typeOf flag)
 
-proc toFlag*[V](flag: V): auto =
-  flagType(flag)(1) shl ord(flag)
+macro `<<`*[V: enum](flag: V): untyped =
+  genAstOpt {}, V, flag:
+    flagType(V)(1) shl ord(flag)
 
-proc toFlags*[T; V](value: T): set[V] {.discardable.} =
+macro `<<!`*[V: enum](flag: V): untyped =
+  genAstOpt {}, V, flag:
+    (<< flag) shl (8 * sizeof(V))
+
+macro `<<`*[V: enum](flags: set[V]): untyped =
+  var sum: BiggestInt = 0
+  for child in flags.children:
+    sum = sum + (1 shl child.intVal)
+  genAstOpt {}, V, sum=newLit sum:
+    flagType(V)(sum)
+
+macro `<<!`*[V: enum](flags: set[V]): untyped =
+  genAstOpt {}, V, flags:
+    (<< flags) shl (8 * sizeof(V))
+
+proc contains*(flags: var AtomicFlags; mask: uint16 or uint32): bool =
+  0 != (load(flags, order = moSequentiallyConsistent) and mask)
+
+proc toSet*[V](value: var AtomicFlags): set[V] {.error.} =
+  let value = load(value, order = moSequentiallyConsistent)
   when nimvm:
     for flag in V.items:
-      if 0 != (value and flag.toFlag):
+      if 0 != (value and (<< flag)):
         result.incl flag
   else:
     result = cast[set[V]](value)
 
-proc toFlags*[T; V](flags: set[V]): T {.deprecated.} =
-  for flag in flags.items:
-    result = result or flag.toFlag
+macro waitMask*[V](flags: var AtomicFlags; mask: set[V]): cint =
+  newCall(bindSym"waitMask", flags, newCall(bindSym"<<", mask))
 
-proc toFlags*[T; V](flags: var AtomicFlags[T]): set[V] {.discardable.} =
-  toFlags[T, V](getFlags(flags))
+macro waitMaskNot*[V](flags: var AtomicFlags; mask: set[V]): cint =
+  newCall(bindSym"waitMask", flags, newCall(bindSym"<<!", mask))
 
-proc contains*[T; V](flags: var AtomicFlags[T]; one: V): bool =
-  0 != (getFlags(flags) and one.toFlag)
+macro wakeMask*[V](flags: var AtomicFlags; mask: set[V];
+                   count = high(cint)): cint {.discardable.} =
+  newCall(bindSym"wakeMask", flags, newCall(bindSym"<<", mask), count)
 
-proc contains*[T; V](flags: var AtomicFlags[T]; many: set[V]): bool =
-  0 != (getFlags(flags) and toFlags[T, V](many))
+macro wakeMaskNot*[V](flags: var AtomicFlags; mask: set[V];
+                   count = high(cint)): cint {.discardable.} =
+  newCall(bindSym"wakeMask", flags, newCall(bindSym"<<!", mask), count)
 
-macro `|=`*[T; V](flags: var AtomicFlags[T]; one: V): set[V] =
-  let fType = newCall(bindSym"flagType", one)
-  let toFlags = nnkBracketExpr.newTree(bindSym"toFlags", fType,
-                                       getTypeInst(one))
-  newCall(toFlags, newCall(bindSym"fetchOr", flags,
-          newCall(bindSym"toFlag", one), bindSym"moSequentiallyConsistent"))
+proc swap(flags: var AtomicFlags16; past, future: uint16): bool {.discardable.} =
+  var prior: uint16
+  while 0 == (prior and future):
+    if compareExchange(flags, prior, (prior or future) xor past,
+                       order = moSequentiallyConsistent):
+      return true
+  return false
 
-macro `^=`*[T; V](flags: var AtomicFlags[T]; one: V): set[V] =
-  let fType = newCall(bindSym"flagType", one)
-  let toFlags = nnkBracketExpr.newTree(bindSym"toFlags", fType,
-                                       getTypeInst(one))
-  newCall(toFlags, newCall(bindSym"fetchXor", flags,
-          newCall(bindSym"toFlag", one), bindSym"moSequentiallyConsistent"))
+proc swap(flags: var AtomicFlags32; past, future: uint32): bool {.discardable.} =
+  var prior: uint32
+  while 0 == (prior and future):
+    if compareExchange(flags, prior, (prior or future) xor past,
+                       order = moSequentiallyConsistent):
+      return true
+  return false
 
-macro `|=`*[T; V](flags: var AtomicFlags[T]; many: set[V]): set[V] =
-  let t = getTypeInst(many)[^1]
-  let fType = newCall(bindSym"flagType", t)
-  let toFlags = nnkBracketExpr.newTree(bindSym"toFlags", fType, t)
-  newCall(toFlags, newCall(bindSym"fetchOr", flags,
-          newCall(toFlags, many), bindSym"moSequentiallyConsistent"))
+macro enable*[V: enum](flags: var AtomicFlags; flag: V): bool =
+  newCall(bindSym"swap", flags,
+          newCall(bindSym"<<!", flag), newCall(bindSym"<<", flag))
 
-macro `^=`*[T; V](flags: var AtomicFlags[T]; many: set[V]): set[V] =
-  let t = getTypeInst(many)[^1]
-  let fType = newCall(bindSym"flagType", t)
-  let toFlags = nnkBracketExpr.newTree(bindSym"toFlags", fType, t)
-  newCall(toFlags, newCall(bindSym"fetchXor", flags,
-          newCall(toFlags, many), bindSym"moSequentiallyConsistent"))
+macro disable*[V: enum](flags: var AtomicFlags; flag: V): bool =
+  newCall(bindSym"swap", flags,
+          newCall(bindSym"<<", flag), newCall(bindSym"<<!", flag))
 
-proc waitMask*[T; V](flags: var AtomicFlags[T]; mask: set[V]): cint
+proc toggle*[V: enum](flags: var AtomicFlags; flag: V): auto
   {.discardable.} =
-  waitMask(flags, toFlags[T, V](mask))
-
-proc waitMask*[T; V](flags: var AtomicFlags[T]; compare: T;
-                     mask: set[V]): cint {.discardable.} =
-  waitMask(flags, cast[AtomicFlags[T]](compare), toFlags[T, V](mask))
-
-proc wakeMask*[T; V](flags: var AtomicFlags[T]; mask: set[V];
-                  count = high(cint)): cint {.discardable.} =
-  wakeMask(flags, toFlags[T, V](mask), count = count)
-
-proc toggle*[T; V](flags: var AtomicFlags[T]; past, future: V): bool
-  {.discardable.} =
-  var prior = getFlags flags
-  while (prior and past.toFlag) != 0:
-    result = compareExchange(flags, prior,
-                             (prior or future.toFlag) xor past.toFlag,
-                             order = moSequentiallyConsistent)
-    if result:
-      break
+  fetchXor(flags, (<<! flag) or (<< flag),
+           order = moSequentiallyConsistent)

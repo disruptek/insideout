@@ -1,3 +1,4 @@
+import std/atomics
 import insideout/atomic/flags
 
 type
@@ -5,17 +6,21 @@ type
     Red
     Blue
     Green
-  AtomicLamp = AtomicFlags[uint32]
+  AtomicLamp = AtomicFlags16
 
-doAssert Red.toFlag == 1
-doAssert Blue.toFlag == 2
-doAssert Green.toFlag == 4
-var x: AtomicLamp
-doAssert not x.contains(Red) # notin x
-doAssert (x |= Blue) == {}
-doAssert Blue in x
-doAssert (x |= Red) == {Blue}
-doAssert (x ^= {Red, Green}) == {Red, Blue}
-doAssert Green in x
-doAssert (x |= {Red, Green}) == {Green, Blue}
-doAssert (x ^= {Red}) == {Red, Green, Blue}
+static:
+  doAssert <<Red == 1
+doAssert <<{Red, Blue} == 3
+var x: AtomicFlags16
+store(x, <<{Green} + <<!{Red, Blue}, order = moSequentiallyConsistent)
+doAssert <<Red notin x
+x.toggle(Red)
+doAssert <<Red in x
+x.disable Blue
+doAssert <<Blue notin x
+doAssert <<!Blue in x
+doAssert <<!Red notin x
+x.enable Blue
+doAssert <<Blue in x
+x.enable Green
+doAssert <<Green in x
