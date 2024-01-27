@@ -64,14 +64,6 @@ proc `$`*(mail: Mailbox): string =
     result.add: $mail.owners
     result.add ">"
 
-when defined(danger):
-  template assertInitialized*(mail: Mailbox): untyped = discard
-else:
-  proc assertInitialized*(mail: Mailbox) =
-    ## raise a Defect if the mailbox is not initialized
-    if unlikely mail.isNil:
-      raise AssertionDefect.newException "mailbox uninitialized"
-
 proc newUnboundedFifo*[T](): UnboundedFifo[T] =
   ## create a new unbounded fifo
   new result
@@ -94,14 +86,14 @@ template newMailbox*[T](initialSize: Positive): BoundedFifo[T] =
 
 proc flags*[T](mail: Mailbox[T]): set[WardFlag] =
   ## return the current state of the mailbox
-  assertInitialized mail
+  assert not mail.isNil
   mail[].ward.flags
 
 # FIXME: send/recv either lose block or gain wait/timeout
 
 proc recv*[T](mail: Mailbox[T]): T =
   ## blocking pop of an item from the mailbox
-  assertInitialized mail
+  assert not mail.isNil
   while true:
     case pop(mail[].ward, result)
     of Writable:
@@ -114,7 +106,7 @@ proc recv*[T](mail: Mailbox[T]): T =
 proc tryRecv*[T](mail: Mailbox[T]; message: var T): WardFlag =
   ## non-blocking attempt to pop an item from the mailbox;
   ## true if it worked
-  assertInitialized mail
+  assert not mail.isNil
   let flags = mail.flags
   if Readable notin flags:
     Readable
@@ -127,7 +119,7 @@ proc tryRecv*[T](mail: Mailbox[T]; message: var T): WardFlag =
 
 proc send*[T](mail: Mailbox[T]; item: sink T) =
   ## blocking push of an item into the mailbox
-  assertInitialized mail
+  assert not mail.isNil
   when not defined(danger):
     if unlikely item.isNil:
       raise ValueError.newException "nil message"
@@ -143,7 +135,7 @@ proc send*[T](mail: Mailbox[T]; item: sink T) =
 proc trySend*[T](mail: Mailbox[T]; item: sink T): WardFlag =
   ## non-blocking attempt to push an item into the mailbox;
   ## true if it worked
-  assertInitialized mail
+  assert not mail.isNil
   when not defined(danger):
     if unlikely item.isNil:
       raise ValueError.newException "attempt to send nil"
@@ -160,33 +152,33 @@ proc trySend*[T](mail: Mailbox[T]; item: sink T): WardFlag =
 # XXX: naming is hard
 
 proc waitForPushable*[T](mail: Mailbox[T]): bool =
-  assertInitialized mail
+  assert not mail.isNil
   waitForPushable[T] mail[].ward
 
 proc waitForPoppable*[T](mail: Mailbox[T]): bool =
-  assertInitialized mail
+  assert not mail.isNil
   waitForPoppable[T] mail[].ward
 
 proc disablePush*[T](mail: Mailbox[T]) =
-  assertInitialized mail
+  assert not mail.isNil
   closeWrite mail[].ward
 
 proc disablePop*[T](mail: Mailbox[T]) =
-  assertInitialized mail
+  assert not mail.isNil
   closeRead mail[].ward
 
 proc pause*[T](mail: Mailbox[T]) =
-  assertInitialized mail
+  assert not mail.isNil
   pause mail[].ward
 
 proc resume*[T](mail: Mailbox[T]) =
-  assertInitialized mail
+  assert not mail.isNil
   resume mail[].ward
 
 proc waitForEmpty*[T](mail: Mailbox[T]) =
-  assertInitialized mail
+  assert not mail.isNil
   waitForEmpty mail[].ward
 
 proc waitForFull*[T](mail: Mailbox[T]) =
-  assertInitialized mail
+  assert not mail.isNil
   waitForFull mail[].ward
