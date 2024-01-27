@@ -47,6 +47,10 @@ y.disable Small
 doAssert <<!Small in y
 doAssert <<Medium in y
 doAssert <<!Large in y
+doAssert y.load && <<!{Small, Large}
+doAssert y.load && <<{Medium}
+doAssert y.load !&& <<{Small, Large}
+doAssert y.load !&& <<!{Medium}
 y.disable Large
 doAssert <<!Small in y
 doAssert <<Medium in y

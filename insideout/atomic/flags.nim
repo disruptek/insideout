@@ -7,8 +7,6 @@ import std/macros
 import insideout/futex
 export checkWait, waitMask, wakeMask
 
-# this is a bit loony but we want to support nimskull, so...
-
 type
   AtomicFlags16* = Atomic[uint16]
   AtomicFlags32* = Atomic[uint32]
@@ -40,7 +38,6 @@ macro `<<`*[V: enum](flag: V): untyped =
       1'u32 shl shift
     else:
       {.error: "supported flag sizes are 1 and 2 bytes".}
-    #flagType(v)(1) shl shift
 
 macro `<<!`*[V: enum](flag: V): untyped =
   genAstOpt({}, v=getType(flag), flag):
@@ -53,17 +50,16 @@ macro `<<`*[V: enum](flags: set[V]): untyped =
   if sum == 0:
     return newLit(0)
   result =
-    genAstOpt({}, v=getType(flags), sum=newLit(sum)):
+    genAstOpt({}, v=getType(flags)[^1][^1], sum=newLit(sum)):
       when sizeof(v) <= 1:
         uint16(sum)
       elif sizeof(v) <= 2:
         uint32(sum)
       else:
         {.error: "supported flag sizes are 1 and 2 bytes".}
-      #flagType(V)(sum)
 
 macro `<<!`*[V: enum](flags: set[V]): untyped =
-  genAstOpt({}, v=getType(flags), flags):
+  genAstOpt({}, v=getType(flags)[^1][^1], flags):
     (<< flags) shl (8 * sizeof(v))
 
 proc `||`*[T: FlagsInts](a, b: T): T =
