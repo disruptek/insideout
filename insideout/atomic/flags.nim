@@ -1,10 +1,11 @@
 # atomic bitset for generic enums
 import std/atomics
+import std/bitops
 import std/genasts
 import std/macros
 
 import insideout/futex
-export checkWait
+export checkWait, waitMask, wakeMask
 
 # this is a bit loony but we want to support nimskull, so...
 
@@ -12,8 +13,9 @@ type
   AtomicFlags16* = Atomic[uint16]
   AtomicFlags32* = Atomic[uint32]
   AtomicFlags = AtomicFlags16 or AtomicFlags32
+  FlagsInts = uint16 or uint32
 
-template flagType*(flag: typedesc): untyped =
+template flagType*(flag: typedesc[enum]): untyped =
   when sizeof(flag) <= 1:
     uint16
   elif sizeof(flag) <= 2:
@@ -21,30 +23,79 @@ template flagType*(flag: typedesc): untyped =
   else:
     {.error: "supported flag sizes are 1 and 2 bytes".}
 
-template flagType*[V: enum](flag: V): untyped =
-  flagType(typeOf flag)
+type
+  e {.pure.} = enum x, y
+
+doAssert flagType(e) is uint16
+
+macro flagType*(flag: enum): untyped =
+  newCall(bindSym"flagType", newCall(bindSym"typeOf", flag))
 
 macro `<<`*[V: enum](flag: V): untyped =
-  genAstOpt {}, V, flag:
-    flagType(V)(1) shl ord(flag)
+  let shift = flag.intVal
+  genAstOpt({}, v=getType(flag), shift=newLit(shift)):
+    when sizeof(v) <= 1:
+      1'u16 shl shift
+    elif sizeof(v) <= 2:
+      1'u32 shl shift
+    else:
+      {.error: "supported flag sizes are 1 and 2 bytes".}
+    #flagType(v)(1) shl shift
 
 macro `<<!`*[V: enum](flag: V): untyped =
-  genAstOpt {}, V, flag:
-    (<< flag) shl (8 * sizeof(V))
+  genAstOpt({}, v=getType(flag), flag):
+    (<< flag) shl (8 * sizeof(v))
 
 macro `<<`*[V: enum](flags: set[V]): untyped =
-  var sum: BiggestInt = 0
+  var sum: int = 0
   for child in flags.children:
     sum = sum + (1 shl child.intVal)
-  genAstOpt {}, V, sum=newLit sum:
-    flagType(V)(sum)
+  if sum == 0:
+    return newLit(0)
+  result =
+    genAstOpt({}, v=getType(flags), sum=newLit(sum)):
+      when sizeof(v) <= 1:
+        uint16(sum)
+      elif sizeof(v) <= 2:
+        uint32(sum)
+      else:
+        {.error: "supported flag sizes are 1 and 2 bytes".}
+      #flagType(V)(sum)
 
 macro `<<!`*[V: enum](flags: set[V]): untyped =
-  genAstOpt {}, V, flags:
-    (<< flags) shl (8 * sizeof(V))
+  genAstOpt({}, v=getType(flags), flags):
+    (<< flags) shl (8 * sizeof(v))
 
-proc contains*(flags: var AtomicFlags; mask: uint16 or uint32): bool =
-  0 != (load(flags, order = moSequentiallyConsistent) and mask)
+proc `||`*[T: FlagsInts](a, b: T): T =
+  ## expose bitor with a more natural name
+  bitor(a, b)
+
+proc `||=`*[T: FlagsInts](a: var T; b: T) =
+  ## bitor assignment with a more natural name
+  a = a || b
+
+proc `&&`*[T: FlagsInts](flags: T; mask: T): bool =
+  ## the mask is a subset of the flags
+  mask == bitand(flags, mask)
+
+proc `!&&`*[T: FlagsInts](flags: T; mask: T): bool =
+  ## the mask is not a subset of the flags
+  not (flags && mask)
+
+proc contains*[T: FlagsInts](flags: var Atomic[T]; mask: T): bool =
+  load(flags, order = moSequentiallyConsistent) && mask
+
+proc contains*[T: FlagsInts](flags: Atomic[T]; mask: T): bool {.error: "immutable flags".}
+
+proc contains*(flags: var AtomicFlags16; mask: uint16): bool =
+  load(flags, order = moSequentiallyConsistent) && mask
+
+proc contains*(flags: AtomicFlags16; mask: uint16): bool {.error: "immutable flags".}
+
+proc contains*(flags: var AtomicFlags32; mask: uint32): bool =
+  load(flags, order = moSequentiallyConsistent) && mask
+
+proc contains*(flags: AtomicFlags32; mask: uint32): bool {.error: "immutable flags".}
 
 proc toSet*[V](value: var AtomicFlags): set[V] {.error.} =
   let value = load(value, order = moSequentiallyConsistent)
@@ -69,31 +120,34 @@ macro wakeMaskNot*[V](flags: var AtomicFlags; mask: set[V];
                    count = high(cint)): cint {.discardable.} =
   newCall(bindSym"wakeMask", flags, newCall(bindSym"<<!", mask), count)
 
-proc swap(flags: var AtomicFlags16; past, future: uint16): bool {.discardable.} =
-  var prior: uint16
-  while 0 == (prior and future):
-    if compareExchange(flags, prior, (prior or future) xor past,
-                       order = moSequentiallyConsistent):
+proc swap[T: FlagsInts](flags: var AtomicFlags; past, future: T): bool {.discardable.} =
+  when T is uint32:
+    assert flags is AtomicFlags32
+    var prior: uint32
+  elif T is uint16:
+    assert flags is AtomicFlags16
+    var prior: uint16
+  else:
+    {.error: "wut".}
+  let mask = bitnot(past)   # future flags not in past flags
+  when defined(danger):
+    # expect a normal transition
+    template test(): untyped = prior !&& future
+  else:
+    # check that the flags aren't corrupted somehow
+    template test(): untyped = (prior !&& mask) or (prior && past)
+    if future != bitand(mask, future):
+      raise Defect.newException "future flags contain past flags"
+  while test():
+    var value = bitor(bitand(mask, prior), future)
+    if compareExchange(flags, prior, value, order = moSequentiallyConsistent):
       return true
   return false
 
-proc swap(flags: var AtomicFlags32; past, future: uint32): bool {.discardable.} =
-  var prior: uint32
-  while 0 == (prior and future):
-    if compareExchange(flags, prior, (prior or future) xor past,
-                       order = moSequentiallyConsistent):
-      return true
-  return false
-
-macro enable*[V: enum](flags: var AtomicFlags; flag: V): bool =
+macro enable*(flags: var AtomicFlags; flag: enum): bool =
   newCall(bindSym"swap", flags,
           newCall(bindSym"<<!", flag), newCall(bindSym"<<", flag))
 
-macro disable*[V: enum](flags: var AtomicFlags; flag: V): bool =
+macro disable*(flags: var AtomicFlags; flag: enum): bool =
   newCall(bindSym"swap", flags,
           newCall(bindSym"<<", flag), newCall(bindSym"<<!", flag))
-
-proc toggle*[V: enum](flags: var AtomicFlags; flag: V): auto
-  {.discardable.} =
-  fetchXor(flags, (<<! flag) or (<< flag),
-           order = moSequentiallyConsistent)

@@ -5,6 +5,7 @@
 #   * Apache v2 license (license terms in the root directory or at http://www.apache.org/licenses/LICENSE-2.0).
 # at your option. This file may not be copied, modified, or distributed except according to those terms.
 
+import std/atomics
 import std/posix
 
 type
@@ -39,31 +40,31 @@ proc sysFutex(futex: pointer; op: cint; val1: cint; timeout: pointer = nil;
               val2: pointer = nil; val3: cint = 0): cint =
   syscall(NR_Futex, futex, op, val1, timeout, val2, val3)
 
-proc wait*[T](monitor: var T; compare: T): cint =
+proc wait*[T](monitor: var Atomic[T]; compare: T): cint =
   ## Suspend a thread if the value of the futex is the same as refVal.
   sysFutex(addr monitor, WaitPrivate, cast[cint](compare))
 
-proc wait*[T](monitor: var T): cint =
+proc wait*[T](monitor: var Atomic[T]): cint =
   ## Suspend a thread until the value of the futex changes.
   sysFutex(addr monitor, WaitPrivate, cast[cint](monitor))
 
-proc waitMask*[T](monitor: var T; compare: T; mask: uint32): cint =
+proc waitMask*[T](monitor: var Atomic[T]; compare: T; mask: uint32): cint =
   ## Suspend a thread until any of `mask` bits are set.
   sysFutex(addr monitor, WaitBitsPrivate, cast[cint](compare),
            val3 = cast[cint](mask))
 
-proc waitMask*[T](monitor: var T; mask: uint32): cint =
+proc waitMask*[T](monitor: var Atomic[T]; mask: uint32): cint =
   ## Suspend a thread until any of `mask` bits are set.
   sysFutex(addr monitor, WaitBitsPrivate, cast[cint](monitor),
            val3 = cast[cint](mask))
 
-proc wake*[T](monitor: var T; count = high(cint)): cint {.discardable.} =
+proc wake*[T](monitor: var Atomic[T]; count = high(cint)): cint {.discardable.} =
   ## Wake as many as `count` threads from the same process.
   # Returns the number of actually woken threads
   # or a Posix error code (if negative).
   sysFutex(addr monitor, WakePrivate, count)
 
-proc wakeMask*[T](monitor: var T; mask: uint32; count = high(cint)): cint {.discardable.} =
+proc wakeMask*[T](monitor: var Atomic[T]; mask: uint32; count = high(cint)): cint {.discardable.} =
   ## Wake as many as `count` threads from the same process,
   ## which are all waiting on any set bit in `mask`.
   # Returns the number of actually woken threads
