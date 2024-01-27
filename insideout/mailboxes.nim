@@ -1,8 +1,6 @@
 # TODO:
 # impl a variety of mailboxen over mqueues
 # restore mailboxen built on locks
-# impl signalfd handling for thread/process signals
-# impl eventfd for handling thread state changes
 import std/hashes
 import std/strutils
 import std/atomics
@@ -12,17 +10,18 @@ import pkg/loony
 import insideout/atomic/refs
 export refs
 
+import insideout/atomic/flags
 import insideout/ward
 export WardFlag
 
 type
   BoundedFifoObj[T] = object
     when T isnot void:
-      ward: BoundedWard[T]
+      ward: Ward[T]
   BoundedFifo*[T] = AtomicRef[BoundedFifoObj[T]]
   UnboundedFifoObj[T] = object
     when T isnot void:
-      ward: UnboundedWard[T]
+      ward: Ward[T]
   UnboundedFifo*[T] = AtomicRef[UnboundedFifoObj[T]]
 
   MailboxObj[T] = BoundedFifoObj[T] or UnboundedFifoObj[T]
@@ -84,10 +83,10 @@ template newMailbox*[T](initialSize: Positive): BoundedFifo[T] =
   ## create a new mailbox with finite size
   newBoundedFifo[T](initialSize)
 
-proc flags*[T](mail: Mailbox[T]): set[WardFlag] =
-  ## return the current state of the mailbox
+proc isEmpty*[T](mail: Mailbox[T]): bool =
+  ## true if the mailbox is empty
   assert not mail.isNil
-  mail[].ward.flags
+  mail[].ward.isEmpty
 
 # FIXME: send/recv either lose block or gain wait/timeout
 
@@ -107,12 +106,12 @@ proc tryRecv*[T](mail: Mailbox[T]; message: var T): WardFlag =
   ## non-blocking attempt to pop an item from the mailbox;
   ## true if it worked
   assert not mail.isNil
-  let flags = mail.flags
-  if Readable notin flags:
+  let state = mail[].ward.state
+  if state && <<!Readable:
     Readable
-  elif Paused in flags:
+  elif state && <<Paused:
     Paused
-  elif Empty in flags:
+  elif state && <<Empty:
     Empty
   else:
     tryPop(mail[].ward, message)
@@ -139,12 +138,12 @@ proc trySend*[T](mail: Mailbox[T]; item: sink T): WardFlag =
   when not defined(danger):
     if unlikely item.isNil:
       raise ValueError.newException "attempt to send nil"
-  let flags = mail.flags
-  if Writable notin flags:
+  let state = mail[].ward.state
+  if state && <<!Writable:
     Writable
-  elif Paused in flags:
+  elif state && <<Paused:
     Paused
-  elif Full in flags:
+  elif state && <<Full:
     Full
   else:
     tryPush(mail[].ward, item)

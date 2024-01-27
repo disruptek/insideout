@@ -1,6 +1,3 @@
-# TODO: wake on bitmask
-#       order flags by priority
-#       don't sweat races on flags
 import std/atomics
 import std/os
 import std/posix
@@ -12,7 +9,7 @@ import insideout/futex
 import insideout/atomic/flags
 
 type
-  WardFlag* = enum       ## flags for ward state
+  WardFlag* {.size: 2.} = enum       ## flags for ward state
     Interrupt = 0  # tiny type overload for EINTR
     Paused
     Empty
@@ -25,86 +22,100 @@ type
     state: AtomicFlags32
     queue: LoonyQueue[T]
     size: Atomic[int]
-  BoundedWard*[T] = distinct Ward[T]
-  UnboundedWard*[T] = distinct Ward[T]
-  AnyWard*[T] = UnboundedWard[T] or BoundedWard[T] or Ward[T]
 
-proc initUnboundedWard*[T](ward: var UnboundedWard[T]; queue: LoonyQueue[T]) =
-  store(ward.state, <<{Writable, Readable, Empty} + <<!{Full, Paused, Bounded})
+proc initWard*[T](ward: var Ward[T]; queue: LoonyQueue[T]) =
+  const flags =
+    <<{Writable, Readable, Empty} + <<!{Full, Paused, Bounded}
+  store(ward.state, flags, order=moSequentiallyConsistent)
   ward.queue = queue
 
-proc initBoundedWard*[T](ward: var BoundedWard[T]; queue: LoonyQueue[T];
+proc initWard*[T](ward: var Ward[T]; queue: LoonyQueue[T];
                          size: Positive) =
   var flags = <<{Writable, Readable, Empty, Bounded} + <<!Paused
   if 0 == size:
-    flags = flags or <<Full
+    flags ||= <<Full
   else:
-    flags = flags or <<!Full
+    flags ||= <<!Full
   store(ward.state, flags, order=moSequentiallyConsistent)
   store(ward.size, size, order=moSequentiallyConsistent)
   ward.queue = queue
 
-proc newUnboundedWard*[T](): UnboundedWard[T] =
-  initUnboundedWard(result, newLoonyQueue[T]())
+proc newWard*[T](): Ward[T] =
+  initWard(result, newLoonyQueue[T]())
 
-proc newBoundedWard*[T](size: Positive = defaultInitialSize): BoundedWard[T] =
-  initBoundedWard(result, newLoonyQueue[T](), size = size)
+proc newWard*[T](size: Positive = defaultInitialSize): Ward[T] =
+  initWard(result, newLoonyQueue[T](), size = size)
 
-proc performWait[T](ward: var AnyWard[T]; wants: FlagT): bool {.discardable.} =
-  let state = load(ward.state, order=moSequentiallyConsistent)
-  result = wants != wants and state
+proc performWait[T](ward: var Ward[T]; wants: FlagT): bool {.discardable.} =
+  ## true if we waited, false if we already had the flags we wanted
+  let state: FlagT = load(ward.state, order=moSequentiallyConsistent)
+  result = state !&& wants
   if result:
     checkWait waitMask(ward.state, state, wants)
 
-proc waitForPushable*[T](ward: var AnyWard[T]): bool =
+proc isEmpty*[T](ward: var Ward[T]): bool =
+  assert not ward.queue.isNil
+  let state = load(ward.state, order=moSequentiallyConsistent)
+  result = state && <<Empty
+
+proc waitForPushable*[T](ward: var Ward[T]): bool =
+  ## true if the ward is pushable, false if it never will be
   let state = load(ward.state, order=moSequentiallyConsistent)
   if <<!Writable in state:
     false
   elif <<Paused in state:
-    ward.performWait(<<!{Writable, Paused})
+    discard ward.performWait(<<!{Writable, Paused})
+    true
   elif <<Full in state:
-    ward.performWait(<<!{Writable, Full})
+    discard ward.performWait(<<!{Writable, Full})
+    true
 
-proc waitForPoppable*[T](ward: var AnyWard[T]): bool =
+proc waitForPoppable*[T](ward: var Ward[T]): bool =
+  ## true if the ward is poppable, false if it never will be
   let state = load(ward.state, order=moSequentiallyConsistent)
   if <<!Readable in state:
     false
   elif <<Paused in state:
-    ward.performWait(<<!{Readable, Paused})
+    discard ward.performWait(<<!{Readable, Paused})
+    true
   elif <<Empty in state:
     # NOTE: short-circuit when the ward is empty and unwritable
     if <<Writable in state:
-      ward.performWait(<<!{Writable, Readable, Empty})
+      discard ward.performWait(<<!{Writable, Readable, Empty})
+      true
     else:
       false
 
-proc performPush[T](ward: var UnboundedWard[T]; item: sink T): WardFlag =
-  result = Readable
+proc unboundedPush[T](ward: var Ward[T]; item: sink T): WardFlag =
+  ## push an item without regard to bounds
   push(ward.queue, move item)
+  result = Readable
+  # optimistically declare the ward un-empty; a lost
+  # race here simply wakes a waiter harmlessly
   if disable(ward.state, Empty):
     discard wakeMask(ward.state, <<!Empty, 1)
 
-proc markFull[T](ward: var BoundedWard[T]): WardFlag =
+proc markFull[T](ward: var Ward[T]): WardFlag =
   ## mark the ward as full and wake a waiter
+  result = Full
   if enable(ward.state, Full):
     discard wakeMask(ward.state, <<Full, 1)
 
-proc performPush[T](ward: var BoundedWard[T]; item: sink T): WardFlag =
-  template pushImpl(): untyped =
-    # we won the right to safely push
-    push(ward.queue, move item)
-    result = Readable
-    # optimistically declare the ward un-empty; a lost
-    # race here simply wakes a waiter harmlessly
-    if disable(ward.state, Empty):
-      discard wakeMask(ward.state, <<!Empty, 1)
+proc performPush[T](ward: var Ward[T]; item: sink T): WardFlag =
+  ## safely push an item onto the ward; returns Readable
+  ## if successful, else Full or Interrupt
+  # XXX: runtime check for boundedness
+  if <<!Bounded in ward.state:
+    return unboundedPush(ward, item)
+  # otherwise, we're bounded and need to claim a slot
   while true:
     var prior = 1
     # try to claim the last slot, and assign `prior`
     if compareExchange(ward.size, prior, 0, order = moSequentiallyConsistent):
-      pushImpl()
+      # we won the right to safely push
+      discard unboundedPush(ward, item)
       # as expected, we're full
-      ward.markFull()
+      result = ward.markFull()
       break
     elif prior == 0:
       # surprise, we're full
@@ -113,7 +124,7 @@ proc performPush[T](ward: var BoundedWard[T]; item: sink T): WardFlag =
     elif compareExchange(ward.size, prior, prior - 1,
                          order = moSequentiallyConsistent):
       # not full yet
-      pushImpl()
+      result = unboundedPush(ward, item)
       break
     else:
       # race case: failed to win our slot
@@ -125,137 +136,136 @@ proc performPush[T](ward: var BoundedWard[T]; item: sink T): WardFlag =
         # bomb out to try again later
         break
 
-proc tryPush*[T](ward: var AnyWard[T]; item: var T): WardFlag =
+proc tryPush*[T](ward: var Ward[T]; item: var T): WardFlag =
+  ## fast success/fail push of item
   let state = load(ward.state, order=moSequentiallyConsistent)
-  if <<!Writable in state:
+  if state && <<!Writable:
     Writable
-  elif <<Full in state:
+  elif state && <<Full:
     Full
-  elif <<Paused in state:
+  elif state && <<Paused:
     Paused
   else:
     ward.performPush(move item)
 
-proc push*[T](ward: var AnyWard[T]; item: var T): WardFlag =
+proc push*[T](ward: var Ward[T]; item: var T): WardFlag =
+  ## blocking push of an item
   while true:
     result = ward.tryPush(item)
+    echo result
     case result
     of Readable, Writable:
       break
     of Full:
-      if not ward.performWait(<<!{Writable, Full}):
-        result = Writable
-        break
+      discard ward.performWait(<<!{Writable, Full})
     of Paused:
-      if not ward.performWait(<<!{Writable, Paused}):
-        result = Writable
-        break
+      discard ward.performWait(<<!{Writable, Paused})
     else:
       discard
 
-proc markEmpty[T](ward: var AnyWard[T]): WardFlag =
+proc markEmpty[T](ward: var Ward[T]): WardFlag =
   ## mark the ward as empty; if it's also unwritable,
   ## then mark it as unreadable and wake everyone up.
   let state = load(ward.state, order=moSequentiallyConsistent)
   # NOTE: short-circuit when the ward is empty and unwritable
-  if <<!Writable in state:
+  if state && <<!Writable:
     result = Readable
     var woke = false
     woke = woke or enable(ward.state, Empty)
     woke = woke or disable(ward.state, Readable)
     if woke:
-      wakeMask(ward.state, <<Empty + <<!{Readable, Writable})
+      wakeMask(ward.state, <<Empty || <<!{Readable, Writable})
   else:
     result = Empty
     if enable(ward.state, Empty):
       discard wakeMask(ward.state, <<Empty, 1)
 
-proc performPop[T](ward: var UnboundedWard[T]; item: var T): WardFlag =
+proc unboundedPop[T](ward: var Ward[T]; item: var T): WardFlag =
+  ## pop an item without regard to bounds
   item = pop(ward.queue)
   if item.isNil:
     result = ward.markEmpty()
   else:
     result = Writable
 
-proc performPop[T](ward: var BoundedWard[T]; item: var T): WardFlag =
-  item = pop(ward.queue)
-  if item.isNil:
-    result = ward.markEmpty()
-  else:
-    result = Writable
-    # XXX
-    if <<Bounded in load(ward.state, order=moSequentiallyConsistent):
+proc performPop[T](ward: var Ward[T]; item: var T): WardFlag =
+  ## safely pop an item from the ward; returns Writable
+  result = unboundedPop(ward, item)
+  if Writable == result:
+    # XXX: runtime check for boundedness
+    if <<Bounded in ward.state:
       let count = fetchAdd(ward.size, 1, order = moSequentiallyConsistent)
       if 0 == count:
         if disable(ward.state, Full):
           discard wakeMask(ward.state, <<!Full, 1)
 
-proc tryPop*[T](ward: var AnyWard[T]; item: var T): WardFlag =
+proc tryPop*[T](ward: var Ward[T]; item: var T): WardFlag =
+  ## fast success/fail pop of item
   let state = load(ward.state, order=moSequentiallyConsistent)
-  if <<!Readable in state:
+  if state && <<!Readable:
     Readable
-  elif <<Empty in state:
+  elif state && <<Empty:
     Empty
-  elif <<Paused in state:
+  elif state && <<Paused:
     Paused
   else:
     ward.performPop(item)
 
-proc pop*[T](ward: var AnyWard[T]; item: var T): WardFlag =
+proc pop*[T](ward: var Ward[T]; item: var T): WardFlag =
+  ## blocking pop of an item
   while true:
     result = ward.tryPop(item)
     case result
     of Readable, Writable:
       break
     of Empty:
-      if not ward.performWait(<<!{Readable, Empty, Writable}):
-        result = Readable
-        break
+      discard ward.performWait(<<!{Readable, Empty, Writable})
     of Paused:
-      if not ward.performWait(<<!{Readable, Paused}):
-        result = Readable
-        break
+      discard ward.performWait(<<!{Readable, Paused})
     else:
       discard
 
-proc closeRead*[T](ward: var AnyWard[T]) =
+proc closeRead*[T](ward: var Ward[T]) =
   if disable(ward.state, Readable):
     wakeMask(ward.state, <<!Readable)
 
-proc closeWrite*[T](ward: var AnyWard[T]) =
+proc closeWrite*[T](ward: var Ward[T]) =
   if disable(ward.state, Writable):
     wakeMask(ward.state, <<!Writable)
 
-proc pause*[T](ward: var AnyWard[T]) =
+proc pause*[T](ward: var Ward[T]) =
   if enable(ward.state, Paused):
     wakeMask(ward.state, <<Paused)
 
-proc resume*[T](ward: var AnyWard[T]) =
+proc resume*[T](ward: var Ward[T]) =
   if disable(ward.state, Paused):
     wakeMask(ward.state, <<!Paused)
 
-template withPaused[T](ward: var AnyWard[T]; body: typed): untyped =
+template withPaused[T](ward: var Ward[T]; body: typed): untyped =
   pause ward
   try:
     body
   finally:
     resume ward
 
-proc clear*[T](ward: var AnyWard[T]) =
+proc clear*[T](ward: var Ward[T]) =
   withPaused ward:
     while not pop(ward.queue).isNil:
       discard
 
-proc waitForEmpty*[T](ward: var AnyWard[T]) =
+proc waitForEmpty*[T](ward: var Ward[T]) =
   while true:
     let state = load(ward.state, order=moSequentiallyConsistent)
     if <<Empty in state:
       break
     discard waitMask(ward.state, state, <<Empty)
 
-proc waitForFull*[T](ward: var AnyWard[T]) =
+proc waitForFull*[T](ward: var Ward[T]) =
   while true:
     let state = load(ward.state, order=moSequentiallyConsistent)
     if <<Full in state:
       break
     checkWait waitMask(ward.state, state, <<Full)
+
+proc state*[T](ward: var Ward[T]): FlagT =
+  load(ward.state, order=moSequentiallyConsistent)
