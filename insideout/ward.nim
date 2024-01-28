@@ -128,9 +128,10 @@ proc performPush[T](ward: var Ward[T]; item: sink T): WardFlag =
     # try to claim the last slot, and assign `prior`
     if compareExchange(ward.size, prior, 0, order = moSequentiallyConsistent):
       # we won the right to safely push
-      discard unboundedPush(ward, item)
+      result = unboundedPush(ward, item)
       # as expected, we're full
-      result = ward.markFull()
+      discard ward.markFull()
+      # XXX: we have some information about the queue: it's full
       break
     elif prior == 0:
       # surprise, we're full
@@ -138,8 +139,9 @@ proc performPush[T](ward: var Ward[T]; item: sink T): WardFlag =
       break
     elif compareExchange(ward.size, prior, prior - 1,
                          order = moSequentiallyConsistent):
-      # not full yet
       result = unboundedPush(ward, item)
+      # XXX: we have some information about the queue:
+      # it's readable, not empty, not full
       break
     else:
       # race case: failed to win our slot
