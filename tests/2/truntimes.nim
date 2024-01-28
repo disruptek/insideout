@@ -13,7 +13,7 @@ type
   Job = ref object
     flag: Atomic[bool]
 
-proc service(jobs: UnboundedFifo[Job]) {.cps: Server.} =
+proc service(jobs: Mailbox[Job]) {.cps: Server.} =
   debugEcho "service runs"
   var job = recv jobs
   debugEcho "service receives flag: " & $job.flag

@@ -18,14 +18,14 @@ let N =
 proc work() {.cps: Continuation.} =
   discard
 
-proc filler(queue: UnboundedFifo[Continuation]; m: int) {.cps: Continuation.} =
+proc filler(queue: Mailbox[Continuation]; m: int) {.cps: Continuation.} =
   var m = m
   while m > 0:
     queue.send: whelp work()
     dec m
 
 proc attempt(N: Positive; cores: int = countProcessors()) =
-  var queues: seq[UnboundedFifo[Continuation]]
+  var queues: seq[Mailbox[Continuation]]
   block:
     echo "filling queues with ", N, " work items"
     var fills = newMailbox[Continuation]()

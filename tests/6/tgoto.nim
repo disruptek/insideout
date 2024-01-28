@@ -3,13 +3,13 @@ import std/os
 import pkg/cps
 import pkg/insideout
 
-proc visit(home, away: UnboundedFifo[Continuation]) {.cps: Continuation.} =
+proc visit(home, away: Mailbox[Continuation]) {.cps: Continuation.} =
   echo "i am @ ", getThreadId(), " (home)"
   goto away
   echo "i am @ ", getThreadId(), " (away)"
   echo "leaving visit"
 
-proc server(box: UnboundedFifo[Continuation]) {.cps: Continuation.} =
+proc server(box: Mailbox[Continuation]) {.cps: Continuation.} =
   while true:
     var visitor: Continuation
     var receipt: WardFlag = tryRecv(box, visitor)
@@ -28,7 +28,7 @@ proc server(box: UnboundedFifo[Continuation]) {.cps: Continuation.} =
 
 const Service = whelp server
 
-proc application(home: UnboundedFifo[Continuation]) {.cps: Continuation.} =
+proc application(home: Mailbox[Continuation]) {.cps: Continuation.} =
   echo "i am @ ", getThreadId(), " (home)"
   var away = newMailbox[Continuation]()
   var service = Service.spawn(away)

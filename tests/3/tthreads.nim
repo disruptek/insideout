@@ -3,13 +3,10 @@ import std/os
 import std/locks
 
 import pkg/cps
-import pkg/insideout
-import pkg/insideout/monkeys
+import insideout
 
 var N = 1000
 if isUnderValgrind():
-  N = N div 10
-if insideoutSleepyMonkey > 0:
   N = N div 10
 
 block:
@@ -38,13 +35,12 @@ block:
 
   proc goodbye(box: Mailbox[Continuation]) {.cps: Continuation.} =
     var c = recv box
-    while not c.dismissed and not c.finished:
+    while c.running:
       var f: proc (x: sink Continuation): Continuation {.nimcall.} = c.fn
       var n = f(c)
       c = n
       if load(ran) == N:
         discard
-        #kill box
 
   proc hello() {.cps: Continuation.} =
     atomicInc ran
@@ -59,9 +55,9 @@ block:
       remote.send:
         whelp hello()
 
+    waitForEmpty remote
     disablePush remote
-    #waitForDeath remote
+    echo "ran ", ran.load, " continuations"
+    doAssert ran.load == N
 
   main()
-  echo "ran ", ran.load, " continuations"
-  doAssert ran.load == N

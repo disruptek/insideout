@@ -51,7 +51,7 @@ macro createWaitron*(A: typedesc; B: typedesc): untyped =
       "waitron " & repr(A) & " To " & repr(B)
   name.copyLineInfo(A)
   genAstOpt({}, name, A, B):
-    proc name(box: UnboundedFifo[B]) {.cps: A.} =
+    proc name(box: Mailbox[B]) {.cps: A.} =
       ## continuously consume and run `B` continuations
       mixin cooperate
       while true:
@@ -86,7 +86,7 @@ macro createRunner*(A: typedesc; B: typedesc): untyped =
       "runner " & repr(A) & " To " & repr(B)
   name.copyLineInfo(A)
   genAstOpt({}, name, A, B):
-    proc name(box: UnboundedFifo[B]) {.cps: A.} =
+    proc name(box: Mailbox[B]) {.cps: A.} =
       ## run a single `B` continuation
       mixin cooperate
       var c: Continuation = box.recv()
@@ -102,12 +102,12 @@ const
 
 type
   ComeFrom = ref object of Continuation
-    reply: UnboundedFifo[Continuation]
+    reply: Mailbox[Continuation]
 
 proc landing(c: sink Continuation): Continuation =
   goto(c.mom, (ComeFrom c).reply)
 
-proc comeFrom*[T](c: var T; into: UnboundedFifo[T]): Continuation {.cpsMagic.} =
+proc comeFrom*[T](c: var T; into: Mailbox[T]): Continuation {.cpsMagic.} =
   ## move the continuation to the given mailbox; control
   ## resumes in the current thread when successful
 

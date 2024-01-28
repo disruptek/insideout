@@ -19,7 +19,7 @@ let M = countProcessors()
 proc work() {.cps: Continuation.} =
   discard
 
-proc filler(queue: UnboundedFifo[Continuation]; m: int) {.cps: Continuation.} =
+proc filler(queue: Mailbox[Continuation]; m: int) {.cps: Continuation.} =
   var m = m
   while m > 0:
     queue.send: whelp work()

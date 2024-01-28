@@ -15,28 +15,14 @@ import insideout/ward
 export WardFlag
 
 type
-  BoundedFifoObj[T] = object
+  MailboxObj[T] = object
     when T isnot void:
       ward: Ward[T]
-  BoundedFifo*[T] = AtomicRef[BoundedFifoObj[T]]
-  UnboundedFifoObj[T] = object
-    when T isnot void:
-      ward: Ward[T]
-  UnboundedFifo*[T] = AtomicRef[UnboundedFifoObj[T]]
+  Mailbox*[T] = AtomicRef[MailboxObj[T]]
 
-  MailboxObj[T] = BoundedFifoObj[T] or UnboundedFifoObj[T]
-  Mailbox*[T] = BoundedFifo[T] or UnboundedFifo[T]
+proc `=copy`*[T](dest: var MailboxObj[T]; src: MailboxObj[T]) {.error.}
 
-proc `=copy`*[T](dest: var BoundedFifoObj[T]; src: BoundedFifoObj[T]) {.error.}
-proc `=copy`*[T](dest: var UnboundedFifoObj[T]; src: UnboundedFifoObj[T]) {.error.}
-
-proc `=destroy`[T](box: var BoundedFifoObj[T]) =
-  mixin `=destroy`
-  when T isnot void:
-    clear box.ward             # best-effort free of items in the queue
-    `=destroy`(box.ward)       # destroy the ward
-
-proc `=destroy`[T](box: var UnboundedFifoObj[T]) =
+proc `=destroy`[T](box: var MailboxObj[T]) =
   mixin `=destroy`
   when T isnot void:
     clear box.ward             # best-effort free of items in the queue
@@ -63,25 +49,17 @@ proc `$`*(mail: Mailbox): string =
     result.add: $mail.owners
     result.add ">"
 
-proc newUnboundedFifo*[T](): UnboundedFifo[T] =
-  ## create a new unbounded fifo
+proc newMailbox*[T](): Mailbox[T] =
+  ## create a new mailbox limited only by available memory
   new result
   when T isnot void:
     initWard(result[].ward, newLoonyQueue[T]())
 
-proc newBoundedFifo*[T](initialSize: Positive): BoundedFifo[T] =
+proc newMailbox*[T](initialSize: Positive): Mailbox[T] =
   ## create a new mailbox which can hold `initialSize` items
   new result
   when T isnot void:
     initWard(result[].ward, newLoonyQueue[T](), initialSize)
-
-template newMailbox*[T](): UnboundedFifo[T] =
-  ## create a new mailbox of unbounded size
-  newUnboundedFifo[T]()
-
-template newMailbox*[T](initialSize: Positive): BoundedFifo[T] =
-  ## create a new mailbox with finite size
-  newBoundedFifo[T](initialSize)
 
 proc isEmpty*[T](mail: Mailbox[T]): bool =
   ## true if the mailbox is empty

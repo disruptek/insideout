@@ -23,7 +23,7 @@ type
   InsideError* = object of OSError
   SpawnError* = object of InsideError
   Dispatcher* = proc(p: pointer): pointer {.noconv.}
-  Factory*[A, B] = proc(mailbox: UnboundedFifo[B]) {.cps: A.}
+  Factory*[A, B] = proc(mailbox: Mailbox[B]) {.cps: A.}
 
   RuntimeFlag* {.size: 2.} = enum
     Frozen
@@ -46,7 +46,7 @@ type
     events: Fd
     signals: Fd
     factory: Factory[A, B]
-    mailbox: UnboundedFifo[B]
+    mailbox: Mailbox[B]
     continuation: A
     error: ref Exception
 
@@ -290,7 +290,7 @@ template spawnCheck(errno: cint): untyped =
   if e != 0:
     raise SpawnError.newException: $strerror(errno)
 
-proc spawn[A, B](runtime: var RuntimeObj[A, B]; factory: Factory[A, B]; mailbox: UnboundedFifo[B]) =
+proc spawn[A, B](runtime: var RuntimeObj[A, B]; factory: Factory[A, B]; mailbox: Mailbox[B]) =
   ## add compute to mailbox
   runtime.factory = factory
   runtime.mailbox = mailbox
@@ -309,7 +309,7 @@ proc spawn[A, B](runtime: var RuntimeObj[A, B]; factory: Factory[A, B]; mailbox:
                             thread[A, B], cast[pointer](addr runtime))
   spawnCheck pthread_attr_destroy(addr attr)
 
-proc spawn*[A, B](factory: Factory[A, B]; mailbox: UnboundedFifo[B]): Runtime[A, B] =
+proc spawn*[A, B](factory: Factory[A, B]; mailbox: Mailbox[B]): Runtime[A, B] =
   ## create compute from a factory and mailbox
   new result
   spawn(result[], factory, mailbox)
@@ -326,7 +326,7 @@ proc factory*[A, B](runtime: Runtime[A, B]): Factory[A, B] =
   assertInitialized runtime
   runtime[].factory
 
-proc mailbox*[A, B](runtime: Runtime[A, B]): UnboundedFifo[B] =
+proc mailbox*[A, B](runtime: Runtime[A, B]): Mailbox[B] =
   ## recover the mailbox from the runtime
   assertInitialized runtime
   runtime[].mailbox

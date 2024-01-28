@@ -37,7 +37,7 @@ proc updateTotal(c: Reader; message: Message): int {.cpsVoodoo.} =
 proc receiver(c: Reader): int {.cpsVoodoo.} =
   c.receiver
 
-proc reader(queue: UnboundedFifo[Message]) {.cps: Reader.} =
+proc reader(queue: Mailbox[Message]) {.cps: Reader.} =
   initialize()
   while true:
     var msg = recv queue

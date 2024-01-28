@@ -129,7 +129,7 @@ type
 proc count*[A, B](pool: Pool[A, B]): int =
   ## count the number of runtimes in the pool
   assert not pool.isNil
-  var head {.cursor.} = pool.list.head
+  var head {.cursor.} = pool[].list.head
   while not head.isNil:
     inc result
     head = head.next

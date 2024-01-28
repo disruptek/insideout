@@ -17,7 +17,7 @@ proc setupQueryWith(c: Query; y: int): Query {.cpsMagic.} =
 
 proc value(c: Query): int {.cpsVoodoo.} = c.y
 
-proc ask(mailbox: UnboundedFifo[Query]; x: int): int {.cps: Query.} =
+proc ask(mailbox: Mailbox[Query]; x: int): int {.cps: Query.} =
   ## the "client"
   setupQueryWith x
   goto mailbox
@@ -36,7 +36,7 @@ proc setupOracle(o: Oracle): Oracle {.cpsMagic.} =
   o.x = 1
   result = o
 
-proc oracle(box: UnboundedFifo[Query]) {.cps: Oracle.} =
+proc oracle(box: Mailbox[Query]) {.cps: Oracle.} =
   ## the "server"; it does typical continuation stuff
   while true:
     sleep 1000
@@ -65,7 +65,7 @@ proc oracle(box: UnboundedFifo[Query]) {.cps: Oracle.} =
 # define a service using a continuation bootstrap
 const SmartService = whelp oracle
 
-proc application(home: UnboundedFifo[Continuation]) {.cps: Continuation.} =
+proc application(home: Mailbox[Continuation]) {.cps: Continuation.} =
   # create a child service
   echo "i am @ ", getThreadId()
   var mail = newMailbox[Query]()

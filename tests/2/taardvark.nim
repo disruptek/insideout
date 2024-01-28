@@ -9,7 +9,7 @@ import insideout/mailboxes
 type
   Service = Runtime[Continuation, Continuation]
 
-proc server(jobs: UnboundedFifo[Continuation]) {.cps: Continuation.} =
+proc server(jobs: Mailbox[Continuation]) {.cps: Continuation.} =
   var job = recv jobs
   discard trampoline job
 
