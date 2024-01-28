@@ -272,14 +272,14 @@ proc clear*[T](ward: var Ward[T]) =
 proc waitForEmpty*[T](ward: var Ward[T]) =
   while true:
     let state = load(ward.state, order=moSequentiallyConsistent)
-    if <<Empty in state:
+    if state && <<Empty:
       break
     discard waitMask(ward.state, state, <<Empty)
 
 proc waitForFull*[T](ward: var Ward[T]) =
   while true:
     let state = load(ward.state, order=moSequentiallyConsistent)
-    if <<Full in state:
+    if state && <<Full:
       break
     checkWait waitMask(ward.state, state, <<Full)
 
