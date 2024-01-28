@@ -21,7 +21,18 @@ template check(expr: untyped): untyped =
   check(expr, "ok")
 
 template trySendSuccess[T](box: Mailbox[T]; message: T): untyped =
-  box.trySend(message) == Readable
+  block:
+    var r = box.trySend(message)
+    case r
+    of Readable:
+      debugEcho "send ok: " & $r
+      true
+    of Full:
+      debugEcho "oops: " & $r
+      false
+    else:
+      raise AssertionDefect.newException "send fail: " & $r
+      false
 
 template tryRecvSuccess[T](box: Mailbox[T]; message: T): untyped =
   box.tryRecv(message) == Writable
