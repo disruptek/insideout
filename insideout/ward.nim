@@ -169,7 +169,6 @@ proc push*[T](ward: var Ward[T]; item: var T): WardFlag =
   ## blocking push of an item
   while true:
     result = ward.tryPush(item)
-    echo result
     case result
     of Readable, Writable:
       break
