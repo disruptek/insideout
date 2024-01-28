@@ -25,13 +25,10 @@ type
   Dispatcher* = proc(p: pointer): pointer {.noconv.}
   Factory*[A, B] = proc(mailbox: UnboundedFifo[B]) {.cps: A.}
 
-  RuntimeFlag* = enum
+  RuntimeFlag* {.size: 2.} = enum
     Frozen
-    NotFrozen
     Halted
-    NotHalted
     Reaped
-    NotReaped
 
   RuntimeState* = enum
     Uninitialized
@@ -45,7 +42,7 @@ type
   RuntimeObj[A, B] = object
     handle: PThread
     status: Atomic[RuntimeState]
-    flags: AtomicFlags[FlagT]
+    flags: AtomicFlags32
     events: Fd
     signals: Fd
     factory: Factory[A, B]
@@ -143,12 +140,11 @@ proc join*[A, B](runtime: Runtime[A, B]) =
   ## block until the runtime has exited
   assertInitialized runtime
   while true:
-    let current: FlagT = getFlags(runtime[].flags)
-    let flags: set[RuntimeFlag] = toFlags[FlagT, RuntimeFlag](current)
-    if {Reaped, Halted} * flags == {Reaped, Halted}:
+    let flags = load(runtime[].flags, order = moSequentiallyConsistent)
+    if flags && <<{Reaped, Halted}:
       break
     else:
-      checkWait waitMask(runtime[].flags, current, {Reaped, Halted})
+      checkWait waitMask(runtime[].flags, flags, <<{Reaped, Halted})
 
 proc cancel*[A, B](runtime: Runtime[A, B]): bool {.discardable.} =
   ## cancel a runtime; true if successful.
@@ -184,9 +180,9 @@ proc teardown[A, B](p: pointer) {.noconv.} =
     reset runtime[].continuation
     reset runtime[].mailbox
     runtime[].setState(Stopped)
-    runtime[].flags.toggle(NotHalted, Halted)
-    runtime[].flags.toggle(NotReaped, Reaped)
-    wakeMask(runtime[].flags, {Halted, Reaped})
+    runtime[].flags.enable Halted
+    runtime[].flags.enable Reaped
+    wakeMask(runtime[].flags, <<{Halted, Reaped})
     # we won't get another chance to properly
     # decrement the rc on the runtime
     forget runtime
@@ -200,10 +196,9 @@ proc chill[A, B](runtime: var RuntimeObj[A, B]): cint =
   pthread_testcancel()
   when true:
     # wait on flags
-    let current = getFlags(runtime.flags)
-    let flags = toFlags[FlagT, RuntimeFlag](current)
-    if Frozen in flags:
-      checkWait waitMask(runtime.flags, current, {NotFrozen})
+    let flags = load(runtime.flags, order = moSequentiallyConsistent)
+    if flags && <<Frozen:
+      checkWait waitMask(runtime.flags, flags, <<Frozen)
       result =
         pthread_setcancelstate(PTHREAD_CANCEL_DISABLE.cint, addr prior)
   else:
@@ -254,7 +249,7 @@ proc dispatcher[A, B](runtime: sink Runtime[A, B]) =
         else:
           runtime[].setState(Stopping)
       of Running:
-        if Frozen in toFlags[FlagT, RuntimeFlag](runtime[].flags):
+        if <<Frozen in runtime[].flags:
           result = chill runtime[]
         else:
           if dismissed runtime[].continuation:
@@ -299,8 +294,7 @@ proc spawn[A, B](runtime: var RuntimeObj[A, B]; factory: Factory[A, B]; mailbox:
   ## add compute to mailbox
   runtime.factory = factory
   runtime.mailbox = mailbox
-  store(runtime.flags,
-        toFlags[FlagT, RuntimeFlag]({NotHalted, NotReaped, NotFrozen}),
+  store(runtime.flags, <<!{Halted, Reaped, Frozen},
         order = moSequentiallyConsistent)
   assertReady runtime
   var attr {.noinit.}: PThreadAttr
@@ -349,18 +343,13 @@ proc handle*[A, B](runtime: Runtime[A, B]): PThread =
   assertInitialized runtime
   runtime[].handle
 
-proc flags*[A, B](runtime: Runtime[A, B]): set[RuntimeFlag] =
-  ## recover the flags from the runtime
-  assertInitialized runtime
-  toFlags[FlagT, RuntimeFlag](runtime[].flags)
-
 proc pause*[A, B](runtime: Runtime[A, B]) =
   ## pause a running runtime
   assertInitialized runtime
   case state(runtime[])
   of Running:
-    if toggle(runtime[].flags, NotFrozen, Frozen):
-      wakeMask(runtime[].flags, {Frozen})
+    if runtime[].flags.enable Frozen:
+      wakeMask(runtime[].flags, <<Frozen)
   else:
     discard
 
@@ -369,8 +358,8 @@ proc resume*[A, B](runtime: Runtime[A, B]) =
   assertInitialized runtime
   case state(runtime[])
   of Running:
-    if toggle(runtime[].flags, Frozen, NotFrozen):
-      wakeMask(runtime[].flags, {NotFrozen})
+    if runtime[].flags.disable Frozen:
+      wakeMask(runtime[].flags, <<!Frozen)
   else:
     discard
 
@@ -379,7 +368,7 @@ proc halt*[A, B](runtime: Runtime[A, B]) =
   assertInitialized runtime
   case state(runtime[])
   of Running:
-    if toggle(runtime[].flags, NotHalted, Halted):
-      wakeMask(runtime[].flags, {Halted})
+    if runtime[].flags.enable Halted:
+      wakeMask(runtime[].flags, <<Halted)
   else:
     discard

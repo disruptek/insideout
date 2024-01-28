@@ -3,8 +3,7 @@ import std/posix
 
 import pkg/cps
 
-import pkg/insideout/valgrind
-import pkg/insideout
+import insideout
 
 type
   Reader = ref object of Continuation ## \
@@ -38,7 +37,7 @@ proc updateTotal(c: Reader; message: Message): int {.cpsVoodoo.} =
 proc receiver(c: Reader): int {.cpsVoodoo.} =
   c.receiver
 
-proc reader(queue: Mailbox[Message]) {.cps: Reader.} =
+proc reader(queue: UnboundedFifo[Message]) {.cps: Reader.} =
   initialize()
   while true:
     var msg = recv queue
@@ -52,9 +51,8 @@ proc main() =
   var messages = newMailbox[Message]()
   var runtime = spawn(Receiver, messages)
   block:
-    var hello = newMessage"hello, world!"
     messages.send:
-      hello #newMessage"hello, world!"
+      newMessage"hello, world!"
     sleep 100
   stop runtime
   sleep 500

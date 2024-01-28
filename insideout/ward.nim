@@ -76,30 +76,30 @@ proc isEmpty*[T](ward: var Ward[T]): bool =
 proc waitForPushable*[T](ward: var Ward[T]): bool =
   ## true if the ward is pushable, false if it never will be
   let state = load(ward.state, order=moSequentiallyConsistent)
-  if <<!Writable in state:
-    false
-  elif <<Paused in state:
+  if state && <<!Writable:
+    result = false
+  elif state && <<Paused:
     discard ward.performWait(<<!{Writable, Paused})
-    true
-  elif <<Full in state:
+    result = true
+  elif state && <<Full:
     discard ward.performWait(<<!{Writable, Full})
-    true
+    result = true
 
 proc waitForPoppable*[T](ward: var Ward[T]): bool =
   ## true if the ward is poppable, false if it never will be
   let state = load(ward.state, order=moSequentiallyConsistent)
-  if <<!Readable in state:
-    false
-  elif <<Paused in state:
+  if state && <<!Readable:
+    result = false
+  elif state && <<Paused:
     discard ward.performWait(<<!{Readable, Paused})
-    true
-  elif <<Empty in state:
+    result = true
+  elif state && <<Empty:
     # NOTE: short-circuit when the ward is empty and unwritable
-    if <<Writable in state:
+    if state && <<Writable:
       discard ward.performWait(<<!{Writable, Readable, Empty})
-      true
+      result = true
     else:
-      false
+      result = false
 
 proc unboundedPush[T](ward: var Ward[T]; item: sink T): WardFlag =
   ## push an item without regard to bounds
