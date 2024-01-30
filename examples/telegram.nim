@@ -58,7 +58,7 @@ proc logAs(name: string): proc(text: varargs[string, `$`]) =
       debugEcho "$# $#: $#" % [$getThreadId(), name, output]
 
 proc reader(filename: string; output: Port) {.cps: Continuation.} =
-  ## read `filename` line by line and send each line as an IP to `output` port
+  ## reads `filename` line by line and sends each line as an IP to `output`.
   let debug = logAs"reader"
   debug "(start)"
   let stream = open(filename, fmRead)
@@ -70,7 +70,7 @@ proc reader(filename: string; output: Port) {.cps: Continuation.} =
   debug "(stop)"
 
 proc decomposer(input: Port; output: Port) {.cps: Continuation.} =
-  ## split each IP from `input` into words send each as an IP to `output` port
+  ## splits each IP from `input` into words sends each as an IP to `output`.
   let debug = logAs"decomposer"
   debug "(start)"
   while true:
@@ -86,6 +86,8 @@ proc decomposer(input: Port; output: Port) {.cps: Continuation.} =
   debug "(stop)"
 
 proc recomposer(input: Port; output: Port; size: Positive) {.cps: Continuation.} =
+  ## receives words of IP from `input` and reassembles them into lines of
+  ## <= `size` characters, sending each line as an IP to `output` port.
   let debug = logAs"recomposer"
   debug "(start)"
   var line: string
@@ -110,6 +112,7 @@ proc recomposer(input: Port; output: Port; size: Positive) {.cps: Continuation.}
   debug "(stop)"
 
 proc writer(input: Port; filename: string) {.cps: Continuation.} =
+  ## receives lines of IP from `input` and writes them to `filename`.
   let debug = logAs"writer"
   debug "(start)"
   let stream = open(filename, fmWrite)
@@ -136,6 +139,9 @@ proc network(components: varargs[Continuation]): auto =
     result.spawn(ContinuationRunner, transport)
 
 proc wrap(inputFile: string; outputFile: string; size: Positive = 80) =
+  ## perform word-wrapping on a multi-line `inputFile`, writing the
+  ## result to `outputFile`. `size` is the maximum number of characters
+  ## per line.
   let debug = logAs"wrap"
   # create ports with backpressure
   let rseq_dc = newMailbox[IP](1)             # one input line at a time
