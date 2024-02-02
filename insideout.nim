@@ -139,4 +139,4 @@ proc novelThread*[T](c: var T): T {.cpsMagic.} =
   const Waiter = createWaitron(T, T)
   var mailbox = newMailbox[T]()
   var runtime = spawn(Waiter, mailbox)
-  result = cast[T](comeFrom(c, mailbox))
+  result = T comeFrom(c, mailbox)
