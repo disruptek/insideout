@@ -59,14 +59,6 @@ proc `=copy`*[A, B](runtime: var RuntimeObj[A, B]; other: RuntimeObj[A, B]) {.er
 proc state[A, B](runtime: var RuntimeObj[A, B]): RuntimeState =
   load(runtime.status, order = moAcquire)
 
-when defined(danger):
-  template assertInitialized*(runtime: Runtime): untyped = discard
-else:
-  proc assertInitialized*(runtime: Runtime) =
-    ## raise a Defect if the runtime is not initialized
-    if unlikely runtime.isNil:
-      raise AssertionDefect.newException "runtime uninitialized"
-
 proc setState(runtime: var RuntimeObj; value: RuntimeState) =
   var prior: RuntimeState = Uninitialized
   while prior < value:
@@ -75,17 +67,12 @@ proc setState(runtime: var RuntimeObj; value: RuntimeState) =
       break
 
 proc state*[A, B](runtime: Runtime[A, B]): RuntimeState =
-  assertInitialized runtime
+  assert not runtime.isNil
   state(runtime[])
-
-proc ran*[A, B](runtime: Runtime[A, B]): bool {.deprecated.} =
-  ## true if the runtime has run
-  assertInitialized runtime
-  runtime.state >= Launching
 
 proc hash*(runtime: Runtime): Hash =
   ## whatfer inclusion in a table, etc.
-  assertInitialized runtime
+  assert not runtime.isNil
   cast[Hash](runtime[].handle)
 
 proc `$`(thread: PThread or SysThread): string =
@@ -95,7 +82,7 @@ proc `$`(runtime: RuntimeObj): string =
   $(cast[uint](runtime.handle).toHex())
 
 proc `$`*(runtime: Runtime): string =
-  assertInitialized runtime
+  assert not runtime.isNil
   result = "<run:"
   result.add $runtime[]
   result.add "-"
@@ -104,19 +91,22 @@ proc `$`*(runtime: Runtime): string =
 
 proc `==`*(a, b: Runtime): bool =
   mixin hash
-  assertInitialized a
-  assertInitialized b
+  assert not a.isNil
+  assert not b.isNil
   hash(a) == hash(b)
 
 proc cancel[A, B](runtime: var RuntimeObj[A, B]): bool =
   ## cancel a runtime; true if successful,
   ## false if the runtime is not running
-  case runtime.state
-  of Uninitialized, Stopped:
-    false
-  else:
-    runtime.setState(Stopping)
-    0 == pthread_cancel(runtime.handle)
+  while true:
+    case runtime.state
+    of Uninitialized, Stopped:
+      return false
+    of Launching:
+      discard       # FIXME: would be nice to remove this spin
+    else:
+      runtime.setState(Stopping)
+      return 0 == pthread_cancel(runtime.handle)
 
 proc signal[A, B](runtime: var RuntimeObj[A, B]; sig: int): bool {.used.} =
   ## send a signal to a runtime; true if successful
@@ -129,7 +119,7 @@ proc kill[A, B](runtime: var RuntimeObj[A, B]): bool {.used.} =
 
 proc stop*[A, B](runtime: Runtime[A, B]) =
   ## gently ask the runtime to exit
-  assertInitialized runtime
+  assert not runtime.isNil
   case state(runtime[])
   of Uninitialized, Stopping, Stopped:
     discard
@@ -138,8 +128,8 @@ proc stop*[A, B](runtime: Runtime[A, B]) =
 
 proc join*[A, B](runtime: Runtime[A, B]) =
   ## block until the runtime has exited
-  assertInitialized runtime
-  while true:
+  assert not runtime.isNil
+  while true:  # FIXME: rm spin
     let flags = load(runtime[].flags, order = moSequentiallyConsistent)
     if flags && <<{Reaped, Halted}:
       break
@@ -149,7 +139,7 @@ proc join*[A, B](runtime: Runtime[A, B]) =
 proc cancel*[A, B](runtime: Runtime[A, B]): bool {.discardable.} =
   ## cancel a runtime; true if successful.
   ## always succeeds if the runtime is not running.
-  assertInitialized runtime
+  assert not runtime.isNil
   result = cancel runtime[]
 
 template assertReady(runtime: RuntimeObj): untyped =
@@ -182,26 +172,31 @@ proc teardown[A, B](p: pointer) {.noconv.} =
     runtime[].setState(Stopped)
     runtime[].flags.enable Halted
     runtime[].flags.enable Reaped
-    wakeMask(runtime[].flags, <<{Halted, Reaped})
     # we won't get another chance to properly
     # decrement the rc on the runtime
-    forget runtime
+    if runtime.owners == 1:
+      forget runtime
+      # noone to wake
+    else:
+      wakeMask(runtime[].flags, <<{Reaped, Halted})
+      forget runtime
   when defined(gcOrc):
     GC_runOrc()
 
-proc chill[A, B](runtime: var RuntimeObj[A, B]): cint =
+template mayCancel(r: typed; body: typed): untyped =
   var prior: cint
-  result =
-    pthread_setcancelstate(PTHREAD_CANCEL_ENABLE.cint, addr prior)
-  pthread_testcancel()
-  when true:
-    # wait on flags
-    let flags = load(runtime.flags, order = moSequentiallyConsistent)
-    if flags && <<Frozen:
-      checkWait waitMask(runtime.flags, flags, <<Frozen)
-      result =
-        pthread_setcancelstate(PTHREAD_CANCEL_DISABLE.cint, addr prior)
-  else:
+  r = pthread_setcancelstate(PTHREAD_CANCEL_ENABLE.cint, addr prior)
+  try:
+    body
+  finally:
+    r = pthread_setcancelstate(PTHREAD_CANCEL_DISABLE.cint, addr prior)
+
+proc chill[A, B](runtime: var RuntimeObj[A, B]): cint =
+  # wait on flags
+  let flags = load(runtime.flags, order = moSequentiallyConsistent)
+  if flags && <<Frozen:
+    checkWait waitMask(runtime.flags, flags, <<Frozen)
+  when false:
     # wait for an interrupt
     if 0 == sleep(10):
       runtime[].setState(Stopped)
@@ -233,11 +228,11 @@ proc dispatcher[A, B](runtime: sink Runtime[A, B]) =
         var prior: cint
         case phase
         of 0:
-          result =
-            pthread_setcancelstate(PTHREAD_CANCEL_DISABLE.cint, addr prior)
+          result = pthread_setcancelstate(PTHREAD_CANCEL_DISABLE.cint, addr prior)
+          discard
         of 1:
-          result =
-            pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED.cint, addr prior)
+          result = pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED.cint, addr prior)
+          discard
         of 2:
           when insideoutRenameThread:
             result =
@@ -288,7 +283,7 @@ proc thread[A, B](p: pointer): pointer {.noconv.} =
 template spawnCheck(errno: cint): untyped =
   let e = errno
   if e != 0:
-    raise SpawnError.newException: $strerror(errno)
+    raise SpawnError.newException: $strerror(e)
 
 proc spawn[A, B](runtime: var RuntimeObj[A, B]; factory: Factory[A, B]; mailbox: Mailbox[B]) =
   ## add compute to mailbox
@@ -316,36 +311,35 @@ proc spawn*[A, B](factory: Factory[A, B]; mailbox: Mailbox[B]): Runtime[A, B] =
 
 proc clone*[A, B](runtime: Runtime[A, B]): Runtime[A, B] =
   ## clone a `runtime` to perform the same work
-  assertInitialized runtime
-  assertReady runtime[]
+  assert not runtime.isNil
   new result
   spawn(result[], runtime[].factory, runtime[].mailbox)
 
 proc factory*[A, B](runtime: Runtime[A, B]): Factory[A, B] =
   ## recover the factory from the runtime
-  assertInitialized runtime
+  assert not runtime.isNil
   runtime[].factory
 
 proc mailbox*[A, B](runtime: Runtime[A, B]): Mailbox[B] =
   ## recover the mailbox from the runtime
-  assertInitialized runtime
+  assert not runtime.isNil
   runtime[].mailbox
 
 proc pinToCpu*[A, B](runtime: Runtime[A, B]; cpu: Natural) =
   ## assign a runtime to a specific cpu index
-  assertInitialized runtime
+  assert not runtime.isNil
   if state(runtime[]) >= Launching:
     pinToCpu(runtime[].handle, cpu)
   else:
     raise ValueError.newException "runtime unready to pin"
 
 proc handle*[A, B](runtime: Runtime[A, B]): PThread =
-  assertInitialized runtime
+  assert not runtime.isNil
   runtime[].handle
 
 proc pause*[A, B](runtime: Runtime[A, B]) =
   ## pause a running runtime
-  assertInitialized runtime
+  assert not runtime.isNil
   case state(runtime[])
   of Running:
     if runtime[].flags.enable Frozen:
@@ -355,7 +349,7 @@ proc pause*[A, B](runtime: Runtime[A, B]) =
 
 proc resume*[A, B](runtime: Runtime[A, B]) =
   ## resume a running runtime
-  assertInitialized runtime
+  assert not runtime.isNil
   case state(runtime[])
   of Running:
     if runtime[].flags.disable Frozen:
@@ -365,7 +359,7 @@ proc resume*[A, B](runtime: Runtime[A, B]) =
 
 proc halt*[A, B](runtime: Runtime[A, B]) =
   ## halt a running runtime
-  assertInitialized runtime
+  assert not runtime.isNil
   case state(runtime[])
   of Running:
     if runtime[].flags.enable Halted:

@@ -28,10 +28,10 @@ proc isEmpty*[A, B](pool: var Pool): bool =
 
 proc drain[A, B](pool: var PoolObj[A, B]): Runtime[A, B] =
   withRLock pool.lock:
-    if not pool.isEmpty:
+    if not pool.list.head.isNil:
       result = pool.list.head.value
       if not pool.list.safeRemove(pool.list.head):
-        raise ValueError.newException "remove race"
+        raise Defect.newException "remove race"
 
 proc drain*[A, B](pool: var Pool[A, B]): Runtime[A, B] {.discardable.} =
   ## remove a runtime from the pool;
@@ -92,7 +92,6 @@ proc cancel*[A, B](pool: Pool[A, B]) =
   withRLock pool[].lock:
     for item in pool[].list.items:
       cancel item
-      echo item
 
 proc stop*[A, B](pool: Pool[A, B]) =
   ## command all threads in the pool to stop
@@ -106,10 +105,6 @@ proc shutdown*[A, B](pool: Pool[A, B]) =
   ## then wait for each of them to complete
   stop pool
   join pool
-
-# FIXME: temp-to-perm
-type
-  ContinuationPool*[T] = Pool[Continuation, T]
 
 proc count*[A, B](pool: Pool[A, B]): int =
   ## count the number of runtimes in the pool
