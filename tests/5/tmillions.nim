@@ -45,7 +45,7 @@ proc main4(n: int) {.cps: Continuation.} =
 
 proc go() =
 
-  var count = 100
+  var count = 50
   when not defined(release):
     count = 20
   if isUnderValgrind() or isSanitizing():
@@ -64,10 +64,10 @@ proc go() =
     echo n
     if n == total:
       break
-    os.sleep(250)
+    os.sleep(50)
 
   # exit the threads
-  mail.disablePush()
+  stop pool
 
 go()
 echo "all good"
