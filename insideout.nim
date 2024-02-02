@@ -75,6 +75,7 @@ macro createWaitron*(A: typedesc; B: typedesc): untyped =
           reset c
         else:
           discard
+        cooperate()
 
     whelp name
 
