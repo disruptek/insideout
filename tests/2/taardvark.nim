@@ -1,4 +1,3 @@
-import std/os
 import std/strutils
 
 import pkg/cps
@@ -29,16 +28,6 @@ proc main =
   queue.send:
     whelp shout("i said, 'hello, world!'")
 
-  block:
-    var service = spawn(Factory, queue)
-    # give the service a chance to process the message
-    sleep 10
-    # cancel the service
-    cancel service
-    # give the service a chance to shutdown
-    sleep 10
-
-  # give the service a chance to crash
-  sleep 10
+  var service = spawn(Factory, queue)
 
 main()

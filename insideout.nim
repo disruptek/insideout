@@ -39,7 +39,7 @@ proc goto*[T](continuation: var T; where: Mailbox[T]): T {.cpsMagic.} =
   where.send(move continuation)
   result = nil.T
 
-proc cooperate*(a: Continuation): Continuation {.cpsMagic.} =
+proc cooperate*(a: sink Continuation): Continuation {.cpsMagic.} =
   ## yield to the dispatcher
   a
 
@@ -89,9 +89,23 @@ macro createRunner*(A: typedesc; B: typedesc): untyped =
     proc name(box: Mailbox[B]) {.cps: A.} =
       ## run a single `B` continuation
       mixin cooperate
-      var c: Continuation = box.recv()
-      while c.running:
-        c = bounce c
+      while true:
+        var c: Continuation
+        var r = box.tryRecv(B c)
+        case r
+        of Writable:
+          while c.running:
+            c = bounce c
+            cooperate()
+          reset c
+          break
+        of Readable:
+          break
+        of Interrupt:
+          discard
+        else:
+          if not box.waitForPoppable():
+            break
         cooperate()
 
     whelp name

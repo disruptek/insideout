@@ -1,63 +1,65 @@
 import std/atomics
 import std/os
-import std/locks
 
 import pkg/cps
 import insideout
 
+const T = 2
 var N = 1000
 if isUnderValgrind():
   N = N div 10
 
-block:
-  ## pool with manual shutdown
-  proc main() =
-    let remote = newMailbox[Continuation](N)
-    var pool = newPool(ContinuationWaiter, remote, initialSize = N)
-    doAssert pool.count == N
-    shutdown pool
-    doAssert pool.count == 0
-
-  main()
+proc foo() {.cps: Continuation.} =
+  ## do something... or rather, nothing
+  discard
 
 block:
-  ## pool with automatic shutdown
   proc main() =
-    let remote = newMailbox[Continuation](N)
-    var pool = newPool(ContinuationWaiter, remote, initialSize = N)
-    doAssert pool.count == N
-
-  main()
-
-block:
-  ## runtimes exiting after running input continuations
-  var ran: Atomic[int]
-
-  proc goodbye(box: Mailbox[Continuation]) {.cps: Continuation.} =
-    var c = recv box
-    while c.running:
-      var f: proc (x: sink Continuation): Continuation {.nimcall.} = c.fn
-      var n = f(c)
-      c = n
-      if load(ran) == N:
-        discard
-
-  proc hello() {.cps: Continuation.} =
-    atomicInc ran
-
-  proc main() =
-    let remote = newMailbox[Continuation](N)
-    var pool = newPool(whelp(goodbye), remote, initialSize = N)
-
-    doAssert pool.count == N
-
-    for n in 1..N:
+    echo "pool destroy joins"
+    let remote = newMailbox[Continuation]()
+    var pool = newPool(ContinuationRunner, remote, initialSize = T)
+    doAssert pool.count == T
+    for i in 1..T:
       remote.send:
-        whelp hello()
+        whelp foo()
+  main()
 
-    waitForEmpty remote
-    disablePush remote
-    echo "ran ", ran.load, " continuations"
-    doAssert ran.load == N
+block:
+  proc main() =
+    echo "cancelled pool joins"
+    let remote = newMailbox[Continuation]()
+    var pool = newPool(ContinuationRunner, remote, initialSize = T)
+    doAssert pool.count == T
+    cancel pool
+    echo "cancelled them"
+  main()
+
+block:
+  proc main() =
+    echo "manual pool operations"
+    let remote = newMailbox[Continuation](N)
+    var pool = newPool(ContinuationWaiter, remote, initialSize = T)
+    doAssert pool.count == T
+    echo "cancel"
+    cancel pool
+    doAssert pool.count == T
+    echo "join"
+    join pool
+    doAssert pool.count == T
+    echo "empty"
+    empty pool
+    doAssert pool.count == 0
+  main()
+
+block:
+  proc main() =
+    echo "pool with structured concurrency"
+    let remote = newMailbox[Continuation](N)
+    block:
+      var pool = newPool(ContinuationRunner, remote, initialSize = T)
+      doAssert pool.count == T
+      for i in 1..T:
+        remote.send:
+          whelp foo()
 
   main()

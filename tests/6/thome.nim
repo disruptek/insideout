@@ -2,8 +2,6 @@ import std/os
 import pkg/cps
 import pkg/insideout
 
-quit 1
-
 type
   Oracle = ref object of Continuation  ## server
     x: int
@@ -39,7 +37,6 @@ proc setupOracle(o: Oracle): Oracle {.cpsMagic.} =
 proc oracle(box: Mailbox[Query]) {.cps: Oracle.} =
   ## the "server"; it does typical continuation stuff
   while true:
-    sleep 1000
     var query: Query
     var receipt: WardFlag = tryRecv(box, query)
     debugEcho receipt
@@ -58,7 +55,6 @@ proc oracle(box: Mailbox[Query]) {.cps: Oracle.} =
     of Writable:
       rz query
       discard trampoline(move query)
-      echo "wrote!"
     else:
       discard
 
@@ -69,41 +65,45 @@ proc application(home: Mailbox[Continuation]) {.cps: Continuation.} =
   # create a child service
   echo "i am @ ", getThreadId()
   var mail = newMailbox[Query]()
-  var pool {.used.} = newPool(SmartService, mail, 1)
+  block:
+    var pool {.used.} = newPool(SmartService, mail, 1)
 
-  # submit some questions, etc.
-  var i = 100
-  while i > 0:
+    # submit some questions, etc.
+    var i = 100
+    while i > 0:
+      echo "i am @ ", getThreadId()
+      discard ask(mail, i)
+      echo "i am @ ", getThreadId()
+      goto home
+      echo "i am @ ", getThreadId()
+      dec i
     echo "i am @ ", getThreadId()
-    discard ask(mail, i)
-    echo "i am @ ", getThreadId()
+
+    # go home and drain the pool
     goto home
     echo "i am @ ", getThreadId()
-    dec i
-  sleep 100
+    stop pool
+    echo "stopped pool"
+    cancel pool
+    echo "cancelled pool"
+    join pool
+    echo "joined pool"
+  echo "no more pool"
+  disablePush home
   echo "i am @ ", getThreadId()
-  disablePush mail
-  echo "disabled push"
-  sleep 100
-
-  # go home and drain the pool
-  goto home
-  echo "i am @ ", getThreadId()
-  sleep 100
-  for runtime in pool.mitems:
-    cancel runtime
-    echo runtime
-  sleep 100
 
 proc main =
   echo "\n\n\n"
   block:
     var home = newMailbox[Continuation]()
     var c = Continuation: whelp application(home)
-    while not c.dismissed:
+    while c.running:
       discard trampoline(move c)
       doAssert c.isNil
-      c = recv home
+      try:
+        c = recv home
+      except ValueError:
+        break
     echo "application complete"
   echo "program exit"
 
