@@ -61,12 +61,16 @@ proc newWard*[T](): Ward[T] =
 proc newWard*[T](size: Positive = defaultInitialSize): Ward[T] =
   initWard(result, newLoonyQueue[T](), size = size)
 
+proc performWait[T](ward: var Ward[T]; has: FlagT; wants: FlagT): bool {.discardable.} =
+  ## true if we waited, false if we already had the flags we wanted
+  result = has !&& wants
+  if result:
+    checkWait waitMask(ward.state, has, wants, 0.01)  # FIXME: broken?
+
 proc performWait[T](ward: var Ward[T]; wants: FlagT): bool {.discardable.} =
   ## true if we waited, false if we already had the flags we wanted
   let state: FlagT = load(ward.state, order=moSequentiallyConsistent)
-  result = state !&& wants
-  if result:
-    checkWait waitMask(ward.state, state, wants)
+  result = ward.performWait(state, wants)
 
 proc isEmpty*[T](ward: var Ward[T]): bool =
   assert not ward.queue.isNil
@@ -79,11 +83,11 @@ proc waitForPushable*[T](ward: var Ward[T]): bool =
   if state && <<!Writable:
     result = false
   elif state && <<Paused:
+    result = true
     discard ward.performWait(<<!{Writable, Paused})
-    result = true
   elif state && <<Full:
-    discard ward.performWait(<<!{Writable, Full})
     result = true
+    discard ward.performWait(<<!{Writable, Full})
 
 proc waitForPoppable*[T](ward: var Ward[T]): bool =
   ## true if the ward is poppable, false if it never will be
@@ -91,13 +95,13 @@ proc waitForPoppable*[T](ward: var Ward[T]): bool =
   if state && <<!Readable:
     result = false
   elif state && <<Paused:
-    discard ward.performWait(<<!{Readable, Paused})
     result = true
+    discard ward.performWait(<<!{Readable, Paused})
   elif state && <<Empty:
     # NOTE: short-circuit when the ward is empty and unwritable
     if state && <<Writable:
-      discard ward.performWait(<<!{Writable, Readable, Empty})
       result = true
+      discard ward.performWait(<<!{Writable, Readable, Empty})
     else:
       result = false
 
@@ -176,6 +180,8 @@ proc push*[T](ward: var Ward[T]; item: var T): WardFlag =
       discard ward.performWait(<<!{Writable, Full})
     of Paused:
       discard ward.performWait(<<!{Writable, Paused})
+    of Interrupt:
+      break
     else:
       discard
 
@@ -238,6 +244,8 @@ proc pop*[T](ward: var Ward[T]; item: var T): WardFlag =
       discard ward.performWait(<<!{Readable, Empty, Writable})
     of Paused:
       discard ward.performWait(<<!{Readable, Paused})
+    of Interrupt:
+      break
     else:
       discard
 
@@ -274,14 +282,18 @@ proc waitForEmpty*[T](ward: var Ward[T]) =
     let state = load(ward.state, order=moSequentiallyConsistent)
     if state && <<Empty:
       break
-    discard waitMask(ward.state, state, <<Empty)
+    else:
+      if not ward.performWait(state, <<Empty):
+        break
 
 proc waitForFull*[T](ward: var Ward[T]) =
   while true:
     let state = load(ward.state, order=moSequentiallyConsistent)
     if state && <<Full:
       break
-    checkWait waitMask(ward.state, state, <<Full)
+    else:
+      if not ward.performWait(state, <<Full):
+        break
 
 proc state*[T](ward: var Ward[T]): FlagT =
   load(ward.state, order=moSequentiallyConsistent)

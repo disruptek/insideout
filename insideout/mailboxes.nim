@@ -77,6 +77,8 @@ proc recv*[T](mail: Mailbox[T]): T =
       break
     of Readable:
       raise ValueError.newException "unreadable mailbox"
+    of Interrupt:
+      raise IOError.newException "interrupted"
     else:
       discard
 
@@ -106,6 +108,8 @@ proc send*[T](mail: Mailbox[T]; item: sink T) =
       break
     of Writable:
       raise ValueError.newException "unwritable mailbox"
+    of Interrupt:
+      raise IOError.newException "interrupted"
     else:
       discard
 
