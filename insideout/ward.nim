@@ -86,8 +86,12 @@ proc waitForPushable*[T](ward: var Ward[T]): bool =
     result = true
     discard ward.performWait(<<!{Writable, Paused})
   elif state && <<Full:
-    result = true
-    discard ward.performWait(<<!{Writable, Full})
+    # NOTE: short-circuit when the ward is full and unreadable
+    if state && <<!Readable:
+      result = false
+    else:
+      result = true
+      discard ward.performWait(<<!{Writable, Readable, Full})
 
 proc waitForPoppable*[T](ward: var Ward[T]): bool =
   ## true if the ward is poppable, false if it never will be
@@ -99,11 +103,11 @@ proc waitForPoppable*[T](ward: var Ward[T]): bool =
     discard ward.performWait(<<!{Readable, Paused})
   elif state && <<Empty:
     # NOTE: short-circuit when the ward is empty and unwritable
-    if state && <<Writable:
+    if state && <<!Writable:
+      result = false
+    else:
       result = true
       discard ward.performWait(<<!{Writable, Readable, Empty})
-    else:
-      result = false
 
 proc unboundedPush[T](ward: var Ward[T]; item: sink T): WardFlag =
   ## push an item without regard to bounds
