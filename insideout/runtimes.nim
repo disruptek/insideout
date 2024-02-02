@@ -151,7 +151,13 @@ template assertReady(runtime: RuntimeObj): untyped =
     elif runtime.state != Uninitialized:
       raise ValueError.newException "already launched"
 
-proc renderError(e: ref Exception): string =
+proc renderError(e: ref Exception; s = "crash;"): string =
+  result = newStringOfCap(16 + s.len + e.name.len + e.msg.len)
+  result.add "#"
+  result.add $getThreadId()
+  result.add " "
+  result.add s
+  result.add " "
   result.add e.name
   result.add ": "
   result.add e.msg
@@ -165,21 +171,30 @@ type
   ContinuationFn = proc (c: sink Continuation): Continuation {.nimcall.}
 
 proc teardown[A, B](p: pointer) {.noconv.} =
+  const cErrorMsg = "destroying " & $A & " continuation;"
+  const mErrorMsg = "discarding " & $B & " mailbox;"
   block:
     var runtime = cast[Runtime[A, B]](p)
-    reset runtime[].continuation
-    reset runtime[].mailbox
-    runtime[].setState(Stopped)
-    runtime[].flags.enable Halted
-    runtime[].flags.enable Reaped
+    let warnings = runtime.owners > 1
+    if warnings:
+      runtime[].flags.enable Halted
+    try:
+      reset runtime[].continuation
+    except CatchableError as e:
+      stdmsg().writeLine:
+        renderError(e, cErrorMsg)
+    try:
+      reset runtime[].mailbox
+    except CatchableError as e:
+      stdmsg().writeLine:
+        renderError(e, mErrorMsg)
+    if warnings:
+      runtime[].setState(Stopped)
+      runtime[].flags.enable Reaped
+      wakeMask(runtime[].flags, <<{Reaped, Halted})
     # we won't get another chance to properly
     # decrement the rc on the runtime
-    if runtime.owners == 1:
-      forget runtime
-      # noone to wake
-    else:
-      wakeMask(runtime[].flags, <<{Reaped, Halted})
-      forget runtime
+    forget runtime
   when defined(gcOrc):
     GC_runOrc()
 
@@ -214,6 +229,7 @@ proc dispatcher[A, B](runtime: sink Runtime[A, B]) =
   ## that the mailbox is unexpectedly unavailable.  any
   ## thread interruptions similarly return control to
   ## the dispatcher.
+  const cErrorMsg = $A & " dispatcher crash;"
   var result: cint = 0  # XXX temporary
   pthread_cleanup_push(teardown[A, B], runtime.address)
 
@@ -264,7 +280,7 @@ proc dispatcher[A, B](runtime: sink Runtime[A, B]) =
               when compileOption"stackTrace":
                 writeStackTrace()
               stdmsg().writeLine:
-                renderError e
+                renderError(e, cErrorMsg)
               result = errno
               runtime[].setState(Stopping)
       of Stopping:
