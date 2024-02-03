@@ -1,4 +1,4 @@
-import pkg/insideout/mailboxes
+import insideout/mailboxes
 
 type
   RS = ref string
@@ -58,6 +58,13 @@ proc main =
       check box.owners == 2
       check not bix.isNil
       check bix.owners == 2
+    block:
+      echo "void mailboxen"
+      var box = newMailbox[void]()
+      check not box.isNil
+      check box.owners == 1
+      check box.isFull
+      check box.isEmpty
     block:
       echo "send A"
       var box = newMailbox[RS]()

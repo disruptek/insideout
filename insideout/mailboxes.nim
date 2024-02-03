@@ -1,9 +1,7 @@
-# TODO:
-# impl a variety of mailboxen over mqueues
-# restore mailboxen built on locks
-import std/hashes
-import std/strutils
 import std/atomics
+import std/hashes
+import std/macros
+import std/strutils
 
 import pkg/loony
 
@@ -12,21 +10,19 @@ export refs
 
 import insideout/atomic/flags
 import insideout/ward
-export WardFlag
+export WardFlag, Received, Delivered, Unreadable, Unwritable
 
 type
   MailboxObj[T] = object
-    when T isnot void:
-      ward: Ward[T]
+    ward: Ward[T]
   Mailbox*[T] = AtomicRef[MailboxObj[T]]
 
 proc `=copy`*[T](dest: var MailboxObj[T]; src: MailboxObj[T]) {.error.}
 
 proc `=destroy`[T](box: var MailboxObj[T]) =
   mixin `=destroy`
-  when T isnot void:
-    clear box.ward             # best-effort free of items in the queue
-    `=destroy`(box.ward)       # destroy the ward
+  clear box.ward             # best-effort free of items in the queue
+  `=destroy`(box.ward)       # destroy the ward
 
 proc hash*(mail: var Mailbox): Hash =
   ## whatfer inclusion in a table, etc.
@@ -52,19 +48,29 @@ proc `$`*(mail: Mailbox): string =
 proc newMailbox*[T](): Mailbox[T] =
   ## create a new mailbox limited only by available memory
   new result
-  when T isnot void:
+  when T is void:
+    initWard(result[].ward)
+  else:
     initWard(result[].ward, newLoonyQueue[T]())
 
 proc newMailbox*[T](initialSize: Positive): Mailbox[T] =
   ## create a new mailbox which can hold `initialSize` items
   new result
-  when T isnot void:
+  when T is void:
+    {.warning: "void mailboxen are unbounded".}
+    initWard(result[].ward)
+  else:
     initWard(result[].ward, newLoonyQueue[T](), initialSize)
 
 proc isEmpty*[T](mail: Mailbox[T]): bool =
   ## true if the mailbox is empty
   assert not mail.isNil
   mail[].ward.isEmpty
+
+proc isFull*[T](mail: Mailbox[T]): bool =
+  ## true if the mailbox is full
+  assert not mail.isNil
+  mail[].ward.isFull
 
 # FIXME: send/recv either lose block or gain wait/timeout
 
@@ -73,9 +79,9 @@ proc recv*[T](mail: Mailbox[T]): T =
   assert not mail.isNil
   while true:
     case pop(mail[].ward, result)
-    of Writable:
+    of Received:
       break
-    of Readable:
+    of Unreadable:
       raise ValueError.newException "unreadable mailbox"
     of Interrupt:
       raise IOError.newException "interrupted"
@@ -104,9 +110,9 @@ proc send*[T](mail: Mailbox[T]; item: sink T) =
       raise ValueError.newException "nil message"
   while true:
     case push(mail[].ward, item)
-    of Readable:
+    of Delivered:
       break
-    of Writable:
+    of Unwritable:
       raise ValueError.newException "unwritable mailbox"
     of Interrupt:
       raise IOError.newException "interrupted"
