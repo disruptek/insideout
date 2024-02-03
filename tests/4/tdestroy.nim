@@ -3,35 +3,35 @@ import std/os
 import pkg/cps
 import insideout
 import insideout/runtimes
+import insideout/backlog
 
 proc helloWorld() {.cps: Continuation.} =
-  discard
+  notice "hello world"
 
 proc main() =
-  echo "mailbox"
+  info "mailbox"
   block:
     let mailbox = newMailbox[Continuation]()
 
-  echo "pool"
+  info "pool"
   block:
     let mailbox = newMailbox[Continuation]()
     var pool {.used.} = newPool(ContinuationWaiter, mailbox, 0)
 
-  echo "runtime"
+  info "runtime"
   block:
     let mailbox = newMailbox[Continuation]()
     var pool {.used.} = newPool(ContinuationWaiter, mailbox, 1)
     for runtime in pool.mitems:
-      echo runtime
+      info runtime
       while runtime.state != Running:
         sleep 1
-      echo runtime
-      cancel runtime
       mailbox.send:
         whelp helloWorld()
-      while runtime.state != Stopped:
-        sleep 1
-      echo runtime
+      info runtime
+      cancel runtime
+      join runtime
+      info runtime
 
   when false:
 

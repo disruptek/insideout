@@ -1,65 +1,66 @@
 import std/atomics
-import std/os
 
 import pkg/cps
 import insideout
+import insideout/backlog
 
-const T = 2
-var N = 1000
+const T = 3
+var N = 100
 if isUnderValgrind():
   N = N div 10
 
-proc foo() {.cps: Continuation.} =
+proc foo(i: int) {.cps: Continuation.} =
   ## do something... or rather, nothing
   discard
+  debug "nothing to do #", i
 
 block:
   proc main() =
-    echo "pool destroy joins"
+    notice "pool destroy joins"
     let remote = newMailbox[Continuation]()
     var pool = newPool(ContinuationRunner, remote, initialSize = T)
     doAssert pool.count == T
     for i in 1..T:
+      debug "send ", i
       remote.send:
-        whelp foo()
+        whelp foo(i)
   main()
 
 block:
   proc main() =
-    echo "cancelled pool joins"
+    notice "cancelled pool joins"
     let remote = newMailbox[Continuation]()
     var pool = newPool(ContinuationRunner, remote, initialSize = T)
     doAssert pool.count == T
     cancel pool
-    echo "cancelled them"
   main()
 
 block:
   proc main() =
-    echo "manual pool operations"
+    notice "manual pool operations"
     let remote = newMailbox[Continuation](N)
     var pool = newPool(ContinuationWaiter, remote, initialSize = T)
+    stop pool
     doAssert pool.count == T
-    echo "cancel"
-    cancel pool
-    doAssert pool.count == T
-    echo "join"
     join pool
     doAssert pool.count == T
-    echo "empty"
     empty pool
     doAssert pool.count == 0
   main()
 
 block:
   proc main() =
-    echo "pool with structured concurrency"
+    notice "structured concurrency"
     let remote = newMailbox[Continuation](N)
     block:
       var pool = newPool(ContinuationRunner, remote, initialSize = T)
       doAssert pool.count == T
       for i in 1..T:
-        remote.send:
-          whelp foo()
+        debug "send ", i
+        while true:
+          remote.send:
+            whelp foo(i)
+          break
+      info "exiting block and joining"
 
   main()

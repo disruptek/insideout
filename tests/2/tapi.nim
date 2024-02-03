@@ -1,9 +1,9 @@
-import std/os
 import std/posix
 
 import pkg/cps
 
-import insideout
+import insideout/mailboxes
+import insideout/runtimes
 
 type
   Reader = ref object of Continuation ## \
@@ -48,14 +48,13 @@ const
   Receiver = whelp reader
 
 proc main() =
-  var messages = newMailbox[Message]()
-  var runtime = spawn(Receiver, messages)
   block:
-    messages.send:
-      newMessage"hello, world!"
-    sleep 100
-  stop runtime
-  sleep 500
-  cancel runtime
+    var messages = newMailbox[Message]()
+    block:
+      var runtime = spawn(Receiver, messages)
+      messages.send:
+        newMessage"hello, world!"
+      stop runtime
+      join runtime
 
 main()

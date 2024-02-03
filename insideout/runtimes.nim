@@ -13,7 +13,7 @@ export refs
 
 import insideout/mailboxes
 import insideout/threads
-import insideout/eventqueue
+#import insideout/eventqueue
 
 const
   insideoutStackSize* {.intdefine.} = 16_384
@@ -38,13 +38,12 @@ type
     Stopped
 
 type
-  FlagT = uint32
   RuntimeObj[A, B] = object
     handle: PThread
     status: Atomic[RuntimeState]
     flags: AtomicFlags32
-    events: Fd
-    signals: Fd
+    #events: Fd
+    #signals: Fd
     factory: Factory[A, B]
     mailbox: Mailbox[B]
     continuation: A
@@ -126,7 +125,7 @@ proc stop*[A, B](runtime: Runtime[A, B]) =
   else:
     runtime[].setState(Stopping)
 
-proc join*[A, B](runtime: Runtime[A, B]) =
+proc join*[A, B](runtime: sink Runtime[A, B]) {.raises: ValueError.} =
   ## block until the runtime has exited
   assert not runtime.isNil
   while true:  # FIXME: rm spin
@@ -175,9 +174,7 @@ proc teardown[A, B](p: pointer) {.noconv.} =
   const mErrorMsg = "discarding " & $B & " mailbox;"
   block:
     var runtime = cast[Runtime[A, B]](p)
-    let warnings = runtime.owners > 1
-    if warnings:
-      runtime[].flags.enable Halted
+    runtime[].flags.enable Halted
     try:
       reset runtime[].continuation
     except CatchableError as e:
@@ -188,23 +185,23 @@ proc teardown[A, B](p: pointer) {.noconv.} =
     except CatchableError as e:
       stdmsg().writeLine:
         renderError(e, mErrorMsg)
-    if warnings:
-      runtime[].setState(Stopped)
-      runtime[].flags.enable Reaped
-      wakeMask(runtime[].flags, <<{Reaped, Halted})
+    runtime[].setState(Stopped)
+    runtime[].flags.enable Reaped
+    wakeMask(runtime[].flags, <<{Reaped, Halted})
     # we won't get another chance to properly
     # decrement the rc on the runtime
     forget runtime
   when defined(gcOrc):
     GC_runOrc()
 
-template mayCancel(r: typed; body: typed): untyped =
-  var prior: cint
-  r = pthread_setcancelstate(PTHREAD_CANCEL_ENABLE.cint, addr prior)
-  try:
-    body
-  finally:
-    r = pthread_setcancelstate(PTHREAD_CANCEL_DISABLE.cint, addr prior)
+when false:
+  template mayCancel(r: typed; body: typed): untyped =
+    var prior: cint
+    r = pthread_setcancelstate(PTHREAD_CANCEL_ENABLE.cint, addr prior)
+    try:
+      body
+    finally:
+      r = pthread_setcancelstate(PTHREAD_CANCEL_DISABLE.cint, addr prior)
 
 proc chill[A, B](runtime: var RuntimeObj[A, B]): cint =
   # wait on flags

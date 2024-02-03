@@ -1,6 +1,9 @@
 import std/os
+
 import pkg/cps
-import pkg/insideout
+
+import insideout
+import insideout/backlog
 
 type
   Oracle = ref object of Continuation  ## server
@@ -34,66 +37,62 @@ proc setupOracle(o: Oracle): Oracle {.cpsMagic.} =
   o.x = 1
   result = o
 
+proc cooperate(c: Continuation): Continuation {.cpsMagic.} =
+  c
+
 proc oracle(box: Mailbox[Query]) {.cps: Oracle.} =
   ## the "server"; it does typical continuation stuff
   while true:
     var query: Query
     var receipt: WardFlag = tryRecv(box, query)
-    debugEcho receipt
     case receipt
     of Paused, Empty:
       if not waitForPoppable(box):
-        # the mailbox is unavailable
-        echo "unavailable"
+        info "unavailable"
         break
-      else:
-        debugEcho "try again"
-    of Readable:
-      # the mailbox is unreadable
-      echo "unreadable"
+    of Unreadable:
       break
-    of Writable:
+    of Received:
       rz query
       discard trampoline(move query)
     else:
-      discard
+      info receipt
+      if not waitForPoppable(box):
+        info "unavailable"
+        break
+    cooperate()
+  info "oracle terminating"
 
 # define a service using a continuation bootstrap
 const SmartService = whelp oracle
 
 proc application(home: Mailbox[Continuation]) {.cps: Continuation.} =
   # create a child service
-  echo "i am @ ", getThreadId()
+  info "i am"
   var mail = newMailbox[Query]()
   block:
     var pool {.used.} = newPool(SmartService, mail, 1)
 
     # submit some questions, etc.
-    var i = 100
+    var i = 10
     while i > 0:
-      echo "i am @ ", getThreadId()
+      info "i am"
       discard ask(mail, i)
-      echo "i am @ ", getThreadId()
+      info "i am"
       goto home
-      echo "i am @ ", getThreadId()
+      info "i am"
       dec i
-    echo "i am @ ", getThreadId()
+    info "i am"
 
     # go home and drain the pool
     goto home
-    echo "i am @ ", getThreadId()
+    info "i am"
     stop pool
-    echo "stopped pool"
-    cancel pool
-    echo "cancelled pool"
-    join pool
-    echo "joined pool"
-  echo "no more pool"
+  info "no more pool"
   disablePush home
-  echo "i am @ ", getThreadId()
+  info "i am"
 
 proc main =
-  echo "\n\n\n"
   block:
     var home = newMailbox[Continuation]()
     var c = Continuation: whelp application(home)
@@ -104,8 +103,8 @@ proc main =
         c = recv home
       except ValueError:
         break
-    echo "application complete"
-  echo "program exit"
+    info "application complete"
+  info "program exit"
 
 when isMainModule:
   main()

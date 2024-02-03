@@ -27,10 +27,16 @@ import insideout/mailboxes
 import insideout/runtimes
 import insideout/valgrind
 
-export pools
+when true:
+  import insideout/backlog
+  export backlog
+else:
+  template debug(args: varargs[untyped]) = discard
+
 export mailboxes
 export runtimes
 export valgrind
+export pools
 
 proc goto*[T](continuation: var T; where: Mailbox[T]): T {.cpsMagic.} =
   ## move the current continuation to another compute domain
@@ -54,28 +60,36 @@ macro createWaitron*(A: typedesc; B: typedesc): untyped =
     proc name(box: Mailbox[B]) {.cps: A.} =
       ## continuously consume and run `B` continuations
       mixin cooperate
+      debug "starting waitron"
       while true:
         var c: Continuation
         var r: WardFlag = tryRecv(box, c.B)
         case r
         of Paused, Empty:
           if not waitForPoppable(box):
+            debug "shutting down due to unavailable mailbox"
             # the mailbox is unavailable
             break
-        of Readable:
-          # the mailbox is unreadable
+        of Unreadable:
+          debug "shutting down due to unreadable mailbox"
           break
-        of Writable:
-          # the mailbox is writable because we
-          # just successfully received an item
+        of Interrupt:
+          debug "caught interrupt"
+          discard
+        of Received:
           while c.running:
             c = bounce c
             cooperate()
           # reap the local in the cps environment
           reset c
         else:
+          debug r
+          if not box.waitForPoppable():
+            debug "shutting down due to unavailable mailbox"
+            break
           discard
         cooperate()
+      debug "exiting waitron"
 
     whelp name
 
@@ -90,24 +104,29 @@ macro createRunner*(A: typedesc; B: typedesc): untyped =
     proc name(box: Mailbox[B]) {.cps: A.} =
       ## run a single `B` continuation
       mixin cooperate
+      debug "starting ", B, " runner"
       while true:
         var c: Continuation
         var r = box.tryRecv(B c)
         case r
-        of Writable:
+        of Received:
           while c.running:
             c = bounce c
             cooperate()
           reset c
           break
-        of Readable:
+        of Unreadable:
+          debug "shutting down due to unreadable mailbox"
           break
         of Interrupt:
+          debug "caught interrupt"
           discard
         else:
           if not box.waitForPoppable():
+            debug "shutting down due to unavailable mailbox"
             break
         cooperate()
+      debug "exiting ", B, " runner"
 
     whelp name
 
@@ -137,7 +156,8 @@ proc novelThread*[T](c: var T): T {.cpsMagic.} =
   ## move to a new thread; control resumes
   ## in the current thread when complete
   ## NOTE: specifying `T` goes away if cps loses color
-  const Waiter = createWaitron(T, T)
-  var mailbox = newMailbox[T]()
+  const Waiter = createRunner(T, T)
+  var mailbox = newMailbox[T](1)
   var runtime = spawn(Waiter, mailbox)
-  result = T comeFrom(c, mailbox)
+  result = cast[T](comeFrom(c, mailbox))
+  join runtime

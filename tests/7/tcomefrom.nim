@@ -36,8 +36,8 @@ proc oracle(box: Mailbox[Query]) {.cps: Oracle.} =
   ## the "server"; it does typical continuation stuff
   setupOracle()
   while true:
-    var c: Continuation
-    var r: WardFlag = tryRecv(box, c.Query)
+    var query: Query
+    var r: WardFlag = tryRecv(box, query)
     case r
     of Interrupt, Paused, Empty:
       if not waitForPoppable(box):
@@ -46,11 +46,9 @@ proc oracle(box: Mailbox[Query]) {.cps: Oracle.} =
     of Readable:
       # the mailbox is unreadable
       break
-    of Writable:
-      # the mailbox is writable because we
-      # just successfully received an item
-      rz c.Query
-      discard trampoline(move c)
+    of Received:
+      rz query
+      discard trampoline(move query)
     else:
       discard
 
@@ -72,7 +70,7 @@ proc application(): int {.cps: Continuation.} =
 
   # we're still at home
   doAssert home == getThreadId()
-  #disablePush mail
+  cancel pool
 
 proc main =
   let was = application()
