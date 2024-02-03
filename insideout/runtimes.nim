@@ -187,6 +187,10 @@ proc teardown[A, B](p: pointer) {.noconv.} =
         renderError(e, mErrorMsg)
     runtime[].setState(Stopped)
     runtime[].flags.enable Reaped
+    # FIXME: temporary workaround for race
+    wakeMask(runtime[].flags, <<{Reaped, Halted})
+    wakeMask(runtime[].flags, <<{Reaped, Halted})
+    wakeMask(runtime[].flags, <<{Reaped, Halted})
     wakeMask(runtime[].flags, <<{Reaped, Halted})
     # we won't get another chance to properly
     # decrement the rc on the runtime
