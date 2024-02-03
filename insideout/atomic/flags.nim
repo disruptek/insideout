@@ -116,7 +116,7 @@ macro wakeMaskNot*[V](flags: var AtomicFlags; mask: set[V];
                    count = high(cint)): cint {.discardable.} =
   newCall(bindSym"wakeMask", flags, newCall(bindSym"<<!", mask), count)
 
-proc swap[T: FlagsInts](flags: var AtomicFlags; past, future: T): bool {.discardable.} =
+proc swap*[T: FlagsInts](flags: var AtomicFlags; past, future: T): bool {.discardable.} =
   when T is uint32:
     assert flags is AtomicFlags32
     var prior: uint32
