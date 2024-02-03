@@ -73,7 +73,7 @@ proc waitMask*[T](monitor: var Atomic[T]; mask: uint32): cint =
   sysFutex(addr monitor, WaitBitsPrivate, cast[cint](monitor),
            val3 = cast[cint](mask))
 
-proc wake*[T](monitor: var Atomic[T]; count = high(cint)): cint {.discardable.} =
+proc wake*[T](monitor: var Atomic[T]; count = high(uint32)): cint {.discardable.} =
   ## Wake as many as `count` threads from the same process.
   # Returns the number of actually woken threads
   # or a Posix error code (if negative).
