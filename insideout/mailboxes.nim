@@ -169,3 +169,7 @@ proc waitForEmpty*[T](mail: Mailbox[T]) =
 proc waitForFull*[T](mail: Mailbox[T]) =
   assert not mail.isNil
   waitForFull mail[].ward
+
+proc clear*[T](mail: Mailbox[T]) =
+  assert not mail.isNil
+  clear mail[].ward
