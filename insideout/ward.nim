@@ -112,6 +112,8 @@ proc waitForPushable*[T](ward: var Ward[T]): bool =
     else:
       result = true
       discard ward.performWait(<<!{Writable, Readable, Full})
+  else:
+    result = true
 
 proc waitForPoppable*[T](ward: var Ward[T]): bool =
   ## true if the ward is poppable, false if it never will be
@@ -128,6 +130,8 @@ proc waitForPoppable*[T](ward: var Ward[T]): bool =
     else:
       result = true
       discard ward.performWait(<<!{Writable, Readable, Empty})
+  else:
+    result = true
 
 proc unboundedPush[T](ward: var Ward[T]; item: sink T): WardFlag =
   ## push an item without regard to bounds
