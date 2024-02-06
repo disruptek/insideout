@@ -2,11 +2,8 @@ when not defined(isNimSkull):
   when (NimMajor, NimMinor) < (1, 7):
     {.error: "insideout requires nim >= 1.7".}
 
-when not defined(gcArc):
-  when defined gcOrc:
-    {.warning: "insideout does not support mm:orc".}
-  else:
-    {.error: "insideout requires mm:arc".}
+when not defined(gcArc) and not defined(gcOrc):
+  {.error: "insideout requires arc or orc memory management".}
 
 when not defined(useMalloc):
   {.error: "insideout requires define:useMalloc".}
