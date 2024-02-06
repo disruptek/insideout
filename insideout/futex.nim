@@ -45,10 +45,6 @@ proc wait*[T](monitor: var Atomic[T]; compare: T): cint =
   ## Suspend a thread if the value of the futex is the same as refVal.
   sysFutex(addr monitor, WaitPrivate, cast[uint32](compare))
 
-proc wait*[T](monitor: var Atomic[T]): cint =
-  ## Suspend a thread until the value of the futex changes.
-  sysFutex(addr monitor, WaitPrivate, cast[uint32](monitor))
-
 proc waitMask*[T](monitor: var Atomic[T]; compare: T; mask: uint32): cint =
   ## Suspend a thread until any of `mask` bits are set.
   sysFutex(addr monitor, WaitBitsPrivate, cast[uint32](compare), val3 = mask)
@@ -68,11 +64,6 @@ proc waitMask*[T](monitor: var Atomic[T]; mask: uint32; timeout: float): cint =
   ## give up waiting after `timeout` seconds.
   waitMask(monitor, cast[T](monitor), mask, timeout)
 
-proc waitMask*[T](monitor: var Atomic[T]; mask: uint32): cint =
-  ## Suspend a thread until any of `mask` bits are set.
-  sysFutex(addr monitor, WaitBitsPrivate, cast[cint](monitor),
-           val3 = cast[cint](mask))
-
 proc wake*[T](monitor: var Atomic[T]; count = high(uint32)): cint {.discardable.} =
   ## Wake as many as `count` threads from the same process.
   # Returns the number of actually woken threads
@@ -87,11 +78,12 @@ proc wakeMask*[T](monitor: var Atomic[T]; mask: uint32; count = high(uint32)): c
   sysFutex(addr monitor, WakeBitsPrivate, count, val3 = cast[uint32](mask))
 
 proc checkWait*(err: cint): cint {.discardable.} =
-  if err >= 0: return err
-  case errno
-  #of ETIMEDOUT:
-  #  echo getThreadId(), " stall!"
-  of EINTR, EAGAIN, ETIMEDOUT:
-    return errno
+  if -1 == err:
+    result = errno
+    case errno
+    of EINTR, EAGAIN, ETIMEDOUT:
+      discard
+    else:
+      raise OSError.newException $strerror(errno)
   else:
-    raise ValueError.newException $strerror(errno)
+    result = err
