@@ -1,3 +1,4 @@
+import std/posix
 import std/locks
 
 import pkg/cps
@@ -5,7 +6,10 @@ import pkg/cps
 import insideout/mailboxes
 import insideout/runtimes
 
-const LogBuffer = 32768  ## number of log messages to buffer
+const backlogBuffer = 64*1024  ## number of log messages to buffer
+const backlogFile = "backlog.txt"
+const backlogPerms = S_IRUSR or S_IWUSR
+const backlogModes = O_CREAT or O_WRONLY or O_APPEND or O_NOATIME
 
 type
   Level* = enum
@@ -23,93 +27,33 @@ type
     thread*: int
     message*: string
 
+  Fd = cint  ## convenience for file descriptor, uh, description
+
 const logLevel* =  ## default log level
-  when defined(logAll):
-    lvlAll
-  elif defined(logDebug) or defined(debug):
-    lvlDebug
-  elif defined(logInfo):
-    lvlInfo
-  elif defined(logNotice) or defined(release):
-    lvlNotice
-  elif defined(logWarn) or defined(danger):
-    lvlWarn
-  elif defined(logError):
-    lvlError
+  when defined(logNone):
+    lvlNone
   elif defined(logFatal):
     lvlFatal
-  elif defined(logNone):
-    lvlNone
+  elif defined(logError):
+    lvlError
+  elif defined(logWarn):
+    lvlWarn
+  elif defined(logNotice):
+    lvlNotice
+  elif defined(logInfo):
+    lvlInfo
+  elif defined(logDebug):
+    lvlDebug
+  elif defined(logAll):
+    lvlAll
+  elif defined(danger):
+    lvlWarn
+  elif defined(release):
+    lvlNotice
+  elif defined(debug):
+    lvlDebug
   else:
     lvlInfo
-
-when false:  # how could this be useful to the user?
-  const
-    LevelNames*: array[Level, string] = [
-      "(ALL)", "DEBUG", "INFO", "NOTICE", "WARN", "ERROR", "FATAL", "(NONE)"
-    ] ## Array of strings representing each logging level.
-
-var L: Lock
-initLock L
-var C: Cond
-initCond C
-
-proc cooperate(c: Continuation): Continuation {.cpsMagic.} = c
-
-proc emitLog(msg: sink LogMessage) =
-  var ln = newStringOfCap(24 + msg.message.len)
-  ln.add "#"
-  ln.add $msg.thread
-  ln.add " "
-  ln.add $msg.level
-  ln.add ": "
-  ln.add msg.message
-  stdmsg().writeLine(ln)
-
-proc reader(queue: Mailbox[LogMessage]) {.cps: Continuation.} =
-  let threadId = getThreadId()
-  withLock L:
-    signal C
-    if logLevel <= lvlAll:
-      emitLog LogMessage(thread: threadId, message: "hello backlog")
-  while true:
-    try:
-      let msg = recv queue
-      emitLog msg
-    except IOError:
-      discard
-    except ValueError:  # queue unreadable
-      break
-    except OSError:
-      raise Defect.newException "os error in backlog"
-    cooperate()
-  if logLevel <= lvlAll:
-    emitLog LogMessage(thread: threadId, message: "goodbye backlog")
-
-const QueueReader = whelp reader
-
-# instantiate the log buffer
-var queue = newMailbox[LogMessage](LogBuffer)
-
-proc log*(level: Level; args: varargs[string, `$`]) =
-  if level < logLevel: return
-  var z = 0
-  for arg in args.items:
-    z += arg.len
-  var s = newStringOfCap(z)
-  for arg in args.items:
-    s.add(arg)
-  while true:
-    try:
-      queue.send:
-        LogMessage(level: level, thread: getThreadId(), message: s)
-      break
-    except IOError:     # interrupted
-      echo "INTERRUPT!"
-      discard
-    except ValueError:  # queue unwritable
-      echo "UNWRITEABLE!"
-      break
 
 template debug*(args: varargs[untyped]) =
   if logLevel <= lvlDebug: log(lvlDebug, args)
@@ -123,6 +67,117 @@ template error*(args: varargs[untyped]) =
   if logLevel <= lvlError: log(lvlError, args)
 template fatal*(args: varargs[untyped]) =
   if logLevel <= lvlFatal: log(lvlFatal, args)
+
+when false:  # how could this be useful to the user?
+  const
+    LevelNames*: array[Level, string] = [
+      "(ALL)", "DEBUG", "INFO", "NOTICE", "WARN", "ERROR", "FATAL", "(NONE)"
+    ] ## Array of strings representing each logging level.
+
+proc log*(level: Level; args: varargs[string, `$`])
+
+var L: Lock
+initLock L
+var C: Cond
+initCond C
+
+proc cooperate(c: Continuation): Continuation {.cpsMagic.} = c
+
+template stringMessage(l: Level; t: auto; s: string): LogMessage =
+  LogMessage(level: l, thread: t, message: s)
+
+template stringMessage(l: Level; s: string; id = getThreadId()): LogMessage =
+  LogMessage(level: l, thread: id, message: s)
+  #stringMessage(l, getThreadId(), s)
+
+proc createMessage(level: Level; args: varargs[string, `$`]): LogMessage =
+  var z = 0
+  for arg in args.items:
+    z += arg.len
+  var s = newStringOfCap(z)
+  for arg in args.items:
+    s.add(arg)
+  result = stringMessage(level, s)
+
+proc emitLog(fd: Fd; msg: sink LogMessage) =
+  var ln = newStringOfCap(24 + msg.message.len)
+  ln.add "#"
+  ln.add $msg.thread
+  ln.add " "
+  ln.add $msg.level
+  ln.add ": "
+  ln.add msg.message
+  ln.add "\n"
+  block:
+    let ln = ln.cstring
+    var wrote = 0
+    while wrote < ln.len:
+      let more = write(fd, cast[pointer](cast[int](ln) + wrote), ln.len - wrote)
+      if more == -1:
+        error "backlog write failed with " & $strerror(errno)
+      else:
+        wrote += more
+
+proc reader(queue: Mailbox[LogMessage]) {.cps: Continuation.} =
+  # see if we need to crash right away...
+  var fd = open(backlogFile, backlogModes, backlogPerms)
+  if fd == -1:
+    stdmsg().writeLine(backlogFile & ": " & $strerror(errno))
+    quit 1
+    return
+
+  let threadId = getThreadId()
+  withLock L:
+    signal C      # let the parent continue
+
+  when logLevel <= lvlNone:
+    fd.emitLog lvlNone.stringMessage("hello backlog", id = threadId)
+
+  while true:
+    var msg: LogMessage
+    let r = queue.tryRecv(msg)
+    case r
+    of Unreadable:
+      break
+    of Received:
+      fd.emitLog(move msg)
+    of Empty:
+      if not queue.waitForPoppable():
+        break
+    else:
+      warn "log tryRecv " & $r
+      discard
+    cooperate()
+
+  when logLevel <= lvlNone:
+    fd.emitLog lvlNone.stringMessage("goodbye backlog", id = threadId)
+
+  discard close fd
+
+const QueueReader = whelp reader
+
+# instantiate the log buffer
+var queue = newMailbox[LogMessage](backlogBuffer)
+
+proc log*(level: Level; args: varargs[string, `$`]) {.raises: [].} =
+  if level < logLevel: return
+  var message = createMessage(level, args)
+  while true:
+    let r = queue.trySend(message)
+    case r
+    of Unwritable:
+      break
+    of Delivered:
+      break
+    of Full:
+      if not queue.waitForPushable():
+        break
+    else:
+      warn "log trySend " & $r
+      discard
+
+# stuff the queue to identify the parent thread
+log(lvlNone, "program began")
 
 # instantiate the reader
 var runtime: Runtime[Continuation, LogMessage]
