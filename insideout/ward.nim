@@ -10,13 +10,13 @@ import insideout/atomic/flags
 
 type
   WardFlag* {.size: 2.} = enum       ## flags for ward state
-    Interrupt = 0  # tiny type overload for EINTR
-    Paused
-    Empty
-    Full
-    Readable
-    Writable
-    Bounded
+    Interrupt = 0  # tiny type overload for EINTR            1 / 65536
+    Paused    = 1  #                                         2 / 131072
+    Empty     = 2  #                                         4 / 262144
+    Full      = 3  #                                         8 / 524288
+    Readable  = 4  #                                        16 / 1048576
+    Writable  = 5  #                                        32 / 2097152
+    Bounded   = 6  #                                        64 / 4194304
   FlagT = uint32
   Ward*[T] = object
     state: AtomicFlags32
@@ -32,12 +32,12 @@ const
 
 proc pause*[T](ward: var Ward[T])
 
-proc initWard*(ward: var Ward[void]) =
-  const flags = <<{Writable, Readable, Empty, Bounded} + <<!{Paused, Full}
+proc initWard*[T: void](ward: var Ward[T]) =
+  const flags = <<{Interrupt, Writable, Readable, Empty, Full, Bounded} + <<!{Paused}
   store(ward.state, flags, order=moSequentiallyConsistent)
 
-proc initWard*[T](ward: var Ward[T]; queue: LoonyQueue[T]) =
-  const flags = <<{Writable, Readable, Empty} + <<!{Full, Paused, Bounded}
+proc initWard*[T: not void](ward: var Ward[T]; queue: LoonyQueue[T]) =
+  const flags = <<{Interrupt, Writable, Readable, Empty} + <<!{Full, Bounded, Paused}
   store(ward.state, flags, order=moSequentiallyConsistent)
   # support reinitialization
   if not ward.queue.isNil:
@@ -50,7 +50,7 @@ proc initWard*[T](ward: var Ward[T]; queue: LoonyQueue[T]) =
 
 proc initWard*[T: not void](ward: var Ward[T]; queue: LoonyQueue[T];
                             size: Positive) =
-  const flags = <<{Writable, Readable, Empty, Bounded} + <<!{Paused, Full}
+  const flags = <<{Interrupt, Writable, Readable, Empty, Bounded} + <<!{Full, Paused, Interrupt}
   store(ward.state, flags, order=moSequentiallyConsistent)
   # support reinitialization
   if not ward.queue.isNil:
@@ -64,21 +64,21 @@ proc initWard*[T: not void](ward: var Ward[T]; queue: LoonyQueue[T];
   store(ward.size, size, order=moSequentiallyConsistent)
   ward.queue = queue
 
-proc newWard*[T](): Ward[T] =
+proc newWard[T](): Ward[T] =
   initWard(result, newLoonyQueue[T]())
 
-proc newWard*[T](size: Positive = defaultInitialSize): Ward[T] =
+proc newWard[T](size: Positive = defaultInitialSize): Ward[T] =
   initWard(result, newLoonyQueue[T](), size = size)
 
 proc performWait[T](ward: var Ward[T]; has: FlagT; wants: FlagT): bool {.discardable.} =
-  ## true if we waited, false if we already had the flags we wanted
+  ## true if we had to wait; false otherwise
   result = has !&& wants
   if result:
-    checkWait waitMask(ward.state, has, wants, 0.01)  # FIXME: broken?
+    checkWait waitMask(ward.state, has, wants)
 
 proc performWait[T](ward: var Ward[T]; wants: FlagT): bool {.discardable.} =
   ## true if we waited, false if we already had the flags we wanted
-  let state: FlagT = load(ward.state, order=moSequentiallyConsistent)
+  let state: FlagT = get ward.state
   result = ward.performWait(state, wants)
 
 proc isEmpty*[T](ward: var Ward[T]): bool =
@@ -86,7 +86,7 @@ proc isEmpty*[T](ward: var Ward[T]): bool =
     true
   else:
     assert not ward.queue.isNil
-    let state = load(ward.state, order=moSequentiallyConsistent)
+    let state = get ward.state
     result = state && <<Empty
 
 proc isFull*[T](ward: var Ward[T]): bool =
@@ -94,12 +94,12 @@ proc isFull*[T](ward: var Ward[T]): bool =
     true
   else:
     assert not ward.queue.isNil
-    let state = load(ward.state, order=moSequentiallyConsistent)
+    let state = get ward.state
     result = state && <<Empty
 
 proc waitForPushable*[T](ward: var Ward[T]): bool =
   ## true if the ward is pushable, false if it never will be
-  let state = load(ward.state, order=moSequentiallyConsistent)
+  let state = get ward.state
   if state && <<!Writable:
     result = false
   elif state && <<Paused:
@@ -117,7 +117,7 @@ proc waitForPushable*[T](ward: var Ward[T]): bool =
 
 proc waitForPoppable*[T](ward: var Ward[T]): bool =
   ## true if the ward is poppable, false if it never will be
-  let state = load(ward.state, order=moSequentiallyConsistent)
+  let state = get ward.state
   if state && <<!Readable:
     result = false
   elif state && <<Paused:
@@ -187,7 +187,7 @@ proc performPush[T](ward: var Ward[T]; item: sink T): WardFlag =
 
 proc tryPush*[T](ward: var Ward[T]; item: var T): WardFlag =
   ## fast success/fail push of item
-  let state = load(ward.state, order=moSequentiallyConsistent)
+  let state = get ward.state
   if state && <<!Writable:
     Unwritable
   elif state && <<Full:
@@ -216,15 +216,15 @@ proc push*[T](ward: var Ward[T]; item: var T): WardFlag =
 proc markEmpty[T](ward: var Ward[T]): WardFlag =
   ## mark the ward as empty; if it's also unwritable,
   ## then mark it as unreadable and wake everyone up.
-  let state = load(ward.state, order=moSequentiallyConsistent)
+  let state = get ward.state
   # NOTE: short-circuit when the ward is empty and unwritable
   if state && <<!Writable:
-    result = Readable
+    result = Unreadable
     var woke = false
     woke = woke or enable(ward.state, Empty)
     woke = woke or disable(ward.state, Readable)
     if woke:
-      wakeMask(ward.state, <<Empty || <<!{Readable, Writable})
+      wakeMask(ward.state, <<Empty + <<!{Readable, Writable})
   else:
     result = Empty
     if enable(ward.state, Empty):
@@ -236,22 +236,22 @@ proc unboundedPop[T](ward: var Ward[T]; item: var T): WardFlag =
   if item.isNil:
     result = ward.markEmpty()
   else:
-    result = Writable
+    result = Received
 
 proc performPop[T](ward: var Ward[T]; item: var T): WardFlag =
   ## safely pop an item from the ward; returns Writable
   result = unboundedPop(ward, item)
-  if Writable == result:
+  if Received == result:
     # XXX: runtime check for boundedness
     if <<Bounded in ward.state:
       let count = fetchAdd(ward.size, 1, order = moSequentiallyConsistent)
       if 0 == count:
-        if disable(ward.state, Full):
+        if ward.state.disable Full:
           discard wakeMask(ward.state, <<!Full, 1)
 
 proc tryPop*[T](ward: var Ward[T]; item: var T): WardFlag =
   ## fast success/fail pop of item
-  let state = load(ward.state, order=moSequentiallyConsistent)
+  let state = get ward.state
   if state && <<!Readable:
     Unreadable
   elif state && <<Empty:
@@ -269,7 +269,7 @@ proc pop*[T](ward: var Ward[T]; item: var T): WardFlag =
     of Unreadable, Received:
       break
     of Empty:
-      discard ward.performWait(<<!{Readable, Empty, Writable})
+      discard ward.performWait(<<!{Readable, Empty})
     of Paused:
       discard ward.performWait(<<!{Readable, Paused})
     of Interrupt:
@@ -308,7 +308,7 @@ proc clear*[T](ward: var Ward[T]) =
 
 proc waitForEmpty*[T](ward: var Ward[T]) =
   while true:
-    let state = load(ward.state, order=moSequentiallyConsistent)
+    let state = get ward.state
     if state && <<Empty:
       break
     else:
@@ -317,7 +317,7 @@ proc waitForEmpty*[T](ward: var Ward[T]) =
 
 proc waitForFull*[T](ward: var Ward[T]) =
   while true:
-    let state = load(ward.state, order=moSequentiallyConsistent)
+    let state = get ward.state
     if state && <<Full:
       break
     else:
@@ -325,4 +325,4 @@ proc waitForFull*[T](ward: var Ward[T]) =
         break
 
 proc state*[T](ward: var Ward[T]): FlagT =
-  load(ward.state, order=moSequentiallyConsistent)
+  get ward.state
