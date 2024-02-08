@@ -55,22 +55,22 @@ proc join*[A, B](pool: var Pool[A, B]) =
   assert not pool.isNil
   join pool[]
 
-proc stop[A, B](pool: var PoolObj[A, B]) =
+proc halt[A, B](pool: var PoolObj[A, B]) =
   withRLock pool.lock:
     for item in pool.list.items:
-      debug "stopping ", item, " in pool..."
-      stop item
-      debug "stopped."
+      debug "halting ", item, " in pool..."
+      halt item
+      debug "halted."
 
-proc stop*[A, B](pool: var Pool[A, B]) =
-  ## command all threads in the pool to stop
+proc halt*[A, B](pool: var Pool[A, B]) =
+  ## command all threads in the pool to halt
   assert not pool.isNil
-  stop pool[]
+  halt pool[]
 
 proc `=destroy`[A, B](pool: var PoolObj[A, B]) =
   debug "destroying pool..."
   if not getCurrentException().isNil:
-    stop pool
+    halt pool
   join pool
   while not pool.isEmpty:
     discard drain pool
@@ -122,9 +122,9 @@ proc cancel*[A, B](pool: Pool[A, B]) =
       debug "cancelled."
 
 proc shutdown*[A, B](pool: Pool[A, B]) =
-  ## command all threads in the pool to stop,
+  ## command all threads in the pool to halt,
   ## then wait for each of them to complete
-  stop pool
+  halt pool
   join pool
 
 proc count*[A, B](pool: Pool[A, B]): int =
@@ -150,3 +150,12 @@ proc empty*[A, B](pool: Pool[A, B]) =
   ## remove all runtimes from the pool
   while not pool.isEmpty:
     discard drain pool
+
+template stop*[A, B](pool: Pool[A, B]) =
+  halt pool
+
+proc `$`*[A, B](pool: Pool[A, B]): string =
+  ## return a string representation of the pool
+  assert not pool.isNil
+  withRLock pool[].lock:
+    result = "Pool[" & $A & ", " & $B & "](" & $pool.count & ")"
