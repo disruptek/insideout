@@ -1,5 +1,6 @@
-import std/posix
 import std/locks
+import std/posix except Time
+import std/times
 
 import pkg/cps
 
@@ -25,6 +26,7 @@ type
   LogMessage* = ref object
     level*: Level
     thread*: int
+    time*: Time
     message*: string
 
   Fd = cint  ## convenience for file descriptor, uh, description
@@ -84,11 +86,10 @@ initCond C
 proc cooperate(c: Continuation): Continuation {.cpsMagic.} = c
 
 template stringMessage(l: Level; t: auto; s: string): LogMessage =
-  LogMessage(level: l, thread: t, message: s)
+  LogMessage(level: l, thread: t, message: s, time: getTime())
 
 template stringMessage(l: Level; s: string; id = getThreadId()): LogMessage =
-  LogMessage(level: l, thread: id, message: s)
-  #stringMessage(l, getThreadId(), s)
+  LogMessage(level: l, thread: id, message: s, time: getTime())
 
 proc createMessage(level: Level; args: varargs[string, `$`]): LogMessage =
   var z = 0
@@ -100,8 +101,9 @@ proc createMessage(level: Level; args: varargs[string, `$`]): LogMessage =
   result = stringMessage(level, s)
 
 proc emitLog(fd: Fd; msg: sink LogMessage) =
-  var ln = newStringOfCap(24 + msg.message.len)
-  ln.add "#"
+  const ft = "yyyy-MM-dd\'T\'HH:mm:ss\'.\'fff \'#\'"
+  var ln = newStringOfCap(48 + msg.message.len)
+  ln.add msg.time.format(ft)
   ln.add $msg.thread
   ln.add " "
   ln.add $msg.level
