@@ -87,3 +87,10 @@ proc checkWait*(err: cint): cint {.discardable.} =
       raise OSError.newException $strerror(errno)
   else:
     result = err
+
+proc checkWake*(err: cint): cint {.discardable.} =
+  if -1 == err:
+    result = errno
+    raise OSError.newException $strerror(errno)
+  else:
+    result = err
