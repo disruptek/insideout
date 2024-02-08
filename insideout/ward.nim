@@ -140,13 +140,13 @@ proc unboundedPush[T](ward: var Ward[T]; item: sink T): WardFlag =
   # optimistically declare the ward un-empty; a lost
   # race here simply wakes a waiter harmlessly
   if disable(ward.state, Empty):
-    discard wakeMask(ward.state, <<!Empty, 1)
+    checkWake wakeMask(ward.state, <<!Empty, 1)
 
 proc markFull[T](ward: var Ward[T]): WardFlag =
   ## mark the ward as full and wake a waiter
   result = Full
   if enable(ward.state, Full):
-    discard wakeMask(ward.state, <<Full, 1)
+    checkWake wakeMask(ward.state, <<Full, 1)
 
 proc performPush[T](ward: var Ward[T]; item: sink T): WardFlag =
   ## safely push an item onto the ward; returns Readable
@@ -224,11 +224,11 @@ proc markEmpty[T](ward: var Ward[T]): WardFlag =
     woke = woke or enable(ward.state, Empty)
     woke = woke or disable(ward.state, Readable)
     if woke:
-      wakeMask(ward.state, <<Empty + <<!{Readable, Writable})
+      checkWake wakeMask(ward.state, <<Empty + <<!{Readable, Writable})
   else:
     result = Empty
     if enable(ward.state, Empty):
-      discard wakeMask(ward.state, <<Empty, 1)
+      checkWake wakeMask(ward.state, <<Empty, 1)
 
 proc unboundedPop[T](ward: var Ward[T]; item: var T): WardFlag =
   ## pop an item without regard to bounds
@@ -247,7 +247,7 @@ proc performPop[T](ward: var Ward[T]; item: var T): WardFlag =
       let count = fetchAdd(ward.size, 1, order = moSequentiallyConsistent)
       if 0 == count:
         if ward.state.disable Full:
-          discard wakeMask(ward.state, <<!Full, 1)
+          checkWake wakeMask(ward.state, <<!Full, 1)
 
 proc tryPop*[T](ward: var Ward[T]; item: var T): WardFlag =
   ## fast success/fail pop of item
@@ -279,19 +279,19 @@ proc pop*[T](ward: var Ward[T]; item: var T): WardFlag =
 
 proc closeRead*[T](ward: var Ward[T]) =
   if disable(ward.state, Readable):
-    wakeMask(ward.state, <<!Readable)
+    checkWake wakeMask(ward.state, <<!Readable)
 
 proc closeWrite*[T](ward: var Ward[T]) =
   if disable(ward.state, Writable):
-    wakeMask(ward.state, <<!Writable)
+    checkWake wakeMask(ward.state, <<!Writable)
 
 proc pause*[T](ward: var Ward[T]) =
   if enable(ward.state, Paused):
-    wakeMask(ward.state, <<Paused)
+    checkWake wakeMask(ward.state, <<Paused)
 
 proc resume*[T](ward: var Ward[T]) =
   if disable(ward.state, Paused):
-    wakeMask(ward.state, <<!Paused)
+    checkWake wakeMask(ward.state, <<!Paused)
 
 template withPaused[T](ward: var Ward[T]; body: typed): untyped =
   pause ward
@@ -300,7 +300,7 @@ template withPaused[T](ward: var Ward[T]; body: typed): untyped =
   finally:
     resume ward
 
-proc clear*[T](ward: var Ward[T]) =
+proc clear*[T](ward: var Ward[T]) {.raises: OSError.} =
   when T isnot void:
     withPaused ward:
       while not pop(ward.queue).isNil:
