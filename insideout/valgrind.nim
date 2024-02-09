@@ -47,6 +47,6 @@ proc isUnderValgrind*(): bool =
 
 const runningSanitizer =
   some:
-    "-fsanitize=" in querySetting(SingleValueSetting.compileOptions)
+    "-fsanitize=" in querySetting(SingleValueSetting.commandLine)
 proc isSanitizing*(): bool =
   get runningSanitizer
