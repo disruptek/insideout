@@ -98,40 +98,72 @@ proc `[]=`*[T](c: var Cubby[T]; value: sink T) =
     new c
   get(c)[] = value
 
+proc beginWrite*[T](c: var Cubby[T]): uint =
+  ## begin writing to the cubby
+  assert not c.isEmpty, "allocate the cubby first"
+  result = fetchOr(c.u, turn or wmask, order = moSequentiallyConsistent)
+  checkWake wake(c.f.futex)
+  # we know: whether the reader is reading, wants to read, or has yielded
+  result = result or turn or wmask  # update our copy of the state
+
+proc spinWrite*[T](c: var Cubby[T]; state: uint): uint =
+  ## spin while the reader is reading
+  assert not c.isEmpty, "allocate the cubby first"
+  result = state
+  while (turn or rmask) == (result and (turn or rmask)):  # turn=1, rmask=1
+    checkWait wait(c.f.futex, lower(result))
+    result = load c
+  # we know: the reader doesn't want to read, has yielded, or both
+
+proc endWrite*[T](c: var Cubby[T]) =
+  ## end writing to the cubby
+  assert not c.isEmpty, "allocate the cubby first"
+  discard fetchAnd(c.u, not wmask, order = moSequentiallyConsistent)
+  checkWake wake(c.f.futex)
+
 proc blockingWrite*[T](c: var Cubby[T]; value: sink T) =
   ## write `value` to the cubby; blocks if reader is reading
   assert not c.isEmpty, "allocate the cubby first"
-  var state = fetchOr(c.u, turn or wmask, order = moSequentiallyConsistent)
-  checkWake wake(c.f.futex)
-  # we know: whether the reader is reading, wants to read, or has yielded
-  state = state or turn or wmask  # update our copy of the state
   try:
-    while (turn or rmask) == (state and (turn or rmask)):  # turn=1, rmask=1
-      checkWait wait(c.f.futex, lower(state))
-      state = load c
-    # we know: the reader doesn't want to read, has yielded, or both
+    var state = c.beginWrite()
+    state = c.spinWrite(state)
     get(c)[] = value
   finally:
-    discard fetchAnd(c.u, not wmask, order = moSequentiallyConsistent)
-    checkWake wake(c.f.futex)
+    c.endWrite()
+
+proc beginRead*[T](c: var Cubby[T]): uint =
+  ## begin reading from the cubby
+  assert not c.isEmpty, "allocate the cubby first"
+  result = fetchOr(c.u, rmask, order = moSequentiallyConsistent)
+  result = fetchAnd(c.u, not turn, order = moSequentiallyConsistent)
+  checkWake wake(c.f.futex)
+  # we know: whether the writer is writing, wants to write, or has yielded
+  result = result and not turn  # update our copy of the state
+
+proc spinRead*[T](c: var Cubby[T]; state: uint): uint =
+  ## spin while the writer is writing
+  assert not c.isEmpty, "allocate the cubby first"
+  result = state
+  while wmask == (result and (turn or wmask)):  # turn=0, wmask=1
+    checkWait wait(c.f.futex, lower(result))
+    result = load c
+  # we know: the writer doesn't want to write, has yielded, or both
+
+proc endRead*[T](c: var Cubby[T]) =
+  ## end reading from the cubby
+  assert not c.isEmpty, "allocate the cubby first"
+  discard fetchAnd(c.u, not rmask, order = moSequentiallyConsistent)
+  checkWake wake(c.f.futex)
 
 proc blockingRead*[T](c: var Cubby[T]): T =
   ## read from the cubby; blocks if writer is writing
   assert not c.isEmpty, "allocate the cubby first"
-  var state = fetchOr(c.u, rmask, order = moSequentiallyConsistent)
-  state = fetchAnd(c.u, not turn, order = moSequentiallyConsistent)
-  checkWake wake(c.f.futex)
-  # we know: whether the writer is writing, wants to write, or has yielded
-  state = state and not turn  # update our copy of the state
   try:
-    while wmask == (state and (turn or wmask)):  # turn=0, wmask=1
-      checkWait wait(c.f.futex, lower(state))
-      state = load c
-    # we know: the writer doesn't want to write, has yielded, or both
+    var state = c.beginRead()
+    state = c.spinRead(state)
     result = get(c)[]
   finally:
-    discard fetchAnd(c.u, not rmask, order = moSequentiallyConsistent)
-    checkWake wake(c.f.futex)
+    c.endRead()
 
 proc isReadBlocked*[T](c: var Cubby[T]): bool {.used.} =
   ## true if the reader is blocked
