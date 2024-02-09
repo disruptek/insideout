@@ -79,7 +79,6 @@ proc `!&&`*[T: FlagsInts](flags: T; mask: T): bool =
   not (flags && mask)
 
 proc get*[T: FlagsInts](flags: var Atomic[T]): T =
-  atomicThreadFence(ATOMIC_ACQUIRE)
   load(flags, order = moSequentiallyConsistent)
 
 proc contains*[T: FlagsInts](flags: var Atomic[T]; mask: T): bool =
@@ -140,12 +139,8 @@ proc swap*[T: FlagsInts](flags: var AtomicFlags; past, future: T): bool {.discar
       raise Defect.newException "future flags contain past flags"
   while test():
     var value = bitor(bitand(mask, prior), future)
-    atomicThreadFence(ATOMIC_ACQUIRE)
     if compareExchange(flags, prior, value, order = moSequentiallyConsistent):
-      atomicThreadFence(ATOMIC_RELEASE)
       return true
-    else:
-      atomicThreadFence(ATOMIC_RELEASE)
   return false
 
 macro enable*(flags: var AtomicFlags; flag: enum): bool =
