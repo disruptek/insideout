@@ -5,7 +5,7 @@ import std/genasts
 import std/macros
 
 import insideout/futex
-export checkWait, waitMask, wakeMask
+export checkWait, waitMask, wakeMask, FutexError
 
 type
   AtomicFlags16* = Atomic[uint16]

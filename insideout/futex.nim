@@ -10,6 +10,7 @@ import std/math
 import std/posix
 
 type
+  FutexError* = object of OSError
   FutexOp = enum
     Wait           = 0
     Wake           = 1
@@ -84,13 +85,13 @@ proc checkWait*(err: cint): cint {.discardable.} =
     of EINTR, EAGAIN, ETIMEDOUT:
       discard
     else:
-      raise OSError.newException $strerror(errno)
+      raise FutexError.newException $strerror(errno)
   else:
     result = err
 
 proc checkWake*(err: cint): cint {.discardable.} =
   if -1 == err:
     result = errno
-    raise OSError.newException $strerror(errno)
+    raise FutexError.newException $strerror(errno)
   else:
     result = err

@@ -300,7 +300,7 @@ template withPaused[T](ward: var Ward[T]; body: typed): untyped =
   finally:
     resume ward
 
-proc clear*[T](ward: var Ward[T]) {.raises: OSError.} =
+proc clear*[T](ward: var Ward[T]) {.raises: FutexError.} =
   when T isnot void:
     withPaused ward:
       while not pop(ward.queue).isNil:
