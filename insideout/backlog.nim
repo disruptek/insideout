@@ -1,6 +1,5 @@
 import std/locks
-import std/posix except Time
-import std/times
+import std/posix
 
 import pkg/cps
 
@@ -24,10 +23,12 @@ type
     lvlNone   = "None"    ## No levels active; nothing is logged
 
   LogMessage* = ref object
-    level*: Level
-    thread*: int
-    time*: Time
-    message*: string
+    level: Level
+    thread: int
+    monoTime: Timespec
+    realTime: Timespec
+    threadTime: Timespec
+    message: string
 
   Fd = cint  ## convenience for file descriptor, uh, description
 
@@ -85,11 +86,14 @@ initCond C
 
 proc cooperate(c: Continuation): Continuation {.cpsMagic.} = c
 
-template stringMessage(l: Level; t: auto; s: string): LogMessage =
-  LogMessage(level: l, thread: t, message: s, time: getTime())
+let CLOCK_REALTIME_COARSE {.importc, header: "<time.h>".}: ClockId
+let CLOCK_MONOTONIC_COARSE {.importc, header: "<time.h>".}: ClockId
 
-template stringMessage(l: Level; s: string; id = getThreadId()): LogMessage =
-  LogMessage(level: l, thread: id, message: s, time: getTime())
+proc stringMessage(level: Level; message: string; thread: int): LogMessage =
+  result = LogMessage(level: level, thread: thread, message: message)
+  discard clock_gettime(CLOCK_MONOTONIC_COARSE, result.monoTime)
+  discard clock_gettime(CLOCK_REALTIME_COARSE, result.realTime)
+  discard clock_gettime(CLOCK_THREAD_CPUTIME_ID, result.threadTime)
 
 proc createMessage(level: Level; args: varargs[string, `$`]): LogMessage =
   var z = 0
@@ -98,12 +102,18 @@ proc createMessage(level: Level; args: varargs[string, `$`]): LogMessage =
   var s = newStringOfCap(z)
   for arg in args.items:
     s.add(arg)
-  result = stringMessage(level, s)
+  result = stringMessage(level, s, getThreadId())
+
+proc `$`(ts: Timespec): string =
+  var f = ts.tv_sec.float + ts.tv_nsec / 1_000_000_000
+  result = $f
 
 proc emitLog(fd: Fd; msg: sink LogMessage) =
-  const ft = "yyyy-MM-dd\'T\'HH:mm:ss\'.\'fff \'#\'"
   var ln = newStringOfCap(48 + msg.message.len)
-  ln.add msg.time.format(ft)
+  #const ft = "yyyy-MM-dd\'T\'HH:mm:ss\'.\'fff \'#\'"
+  #ln.add msg.time.format(ft)
+  ln.add $msg.realTime
+  ln.add " #"
   ln.add $msg.thread
   ln.add " "
   ln.add $msg.level
@@ -133,7 +143,7 @@ proc reader(queue: Mailbox[LogMessage]) {.cps: Continuation.} =
     signal C      # let the parent continue
 
   when logLevel <= lvlNone:
-    fd.emitLog lvlNone.stringMessage("hello backlog", id = threadId)
+    fd.emitLog lvlNone.stringMessage("hello backlog", thread = threadId)
 
   while true:
     var msg: LogMessage
@@ -152,7 +162,7 @@ proc reader(queue: Mailbox[LogMessage]) {.cps: Continuation.} =
     cooperate()
 
   when logLevel <= lvlNone:
-    fd.emitLog lvlNone.stringMessage("goodbye backlog", id = threadId)
+    fd.emitLog lvlNone.stringMessage("goodbye backlog", thread = threadId)
 
   discard close fd
 
