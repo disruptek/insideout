@@ -62,29 +62,23 @@ macro createWaitron*(A: typedesc; B: typedesc): untyped =
         var c: Continuation
         var r: WardFlag = tryRecv(box, c.B)
         case r
-        of Paused, Empty:
-          if not waitForPoppable(box):
-            debug "shutting down due to unavailable mailbox"
-            # the mailbox is unavailable
-            break
         of Unreadable:
           debug "shutting down due to unreadable mailbox"
           break
         of Interrupt:
           debug "caught interrupt"
-          discard
         of Received:
           while c.running:
+            debug "will bounce continuation"
             c = bounce c
             cooperate()
           # reap the local in the cps environment
           reset c
         else:
-          debug r
+          debug r, "; waiting for poppable"
           if not box.waitForPoppable():
             debug "shutting down due to unavailable mailbox"
             break
-          discard
         cooperate()
       debug "exiting waitron"
 
@@ -108,6 +102,7 @@ macro createRunner*(A: typedesc; B: typedesc): untyped =
         case r
         of Received:
           while c.running:
+            debug "will bounce continuation"
             c = bounce c
             cooperate()
           reset c
@@ -117,8 +112,8 @@ macro createRunner*(A: typedesc; B: typedesc): untyped =
           break
         of Interrupt:
           debug "caught interrupt"
-          discard
         else:
+          debug r, "; waiting for poppable"
           if not box.waitForPoppable():
             debug "shutting down due to unavailable mailbox"
             break
