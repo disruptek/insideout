@@ -1,9 +1,17 @@
+import std/os
 import std/strutils
 
 import pkg/cps
 
 import insideout/runtimes
 import insideout/mailboxes
+import insideout/valgrind
+
+let N =
+  if getEnv"GITHUB_ACTIONS" == "true" or not defined(danger) or isGrinding():
+    10_000
+  else:
+    100_000
 
 proc server(jobs: Mailbox[Continuation]) {.cps: Continuation.} =
   var job = recv jobs
@@ -28,4 +36,5 @@ proc main =
   var service = spawn(Factory, queue)
   join service
 
-main()
+for _ in 1..N:
+  main()
