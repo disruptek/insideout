@@ -89,10 +89,20 @@ proc cooperate(c: Continuation): Continuation {.cpsMagic.} = c
 let CLOCK_REALTIME_COARSE {.importc, header: "<time.h>".}: ClockId
 let CLOCK_MONOTONIC_COARSE {.importc, header: "<time.h>".}: ClockId
 
+var n: int
+
+when defined(danger):
+  # faster but less accurate
+  let rtClock = CLOCK_REALTIME_COARSE
+  let mtClock = CLOCK_MONOTONIC_COARSE
+else:
+  const rtClock = CLOCK_REALTIME
+  const mtClock = CLOCK_MONOTONIC
+
 proc stringMessage(level: Level; message: string; thread: int): LogMessage =
   result = LogMessage(level: level, thread: thread, message: message)
-  discard clock_gettime(CLOCK_MONOTONIC_COARSE, result.monoTime)
-  discard clock_gettime(CLOCK_REALTIME_COARSE, result.realTime)
+  discard clock_gettime(mtClock, result.monoTime)
+  discard clock_gettime(rtClock, result.realTime)
   discard clock_gettime(CLOCK_THREAD_CPUTIME_ID, result.threadTime)
 
 proc createMessage(level: Level; args: varargs[string, `$`]): LogMessage =
@@ -112,12 +122,15 @@ proc emitLog(fd: Fd; msg: sink LogMessage) =
   var ln = newStringOfCap(48 + msg.message.len)
   #const ft = "yyyy-MM-dd\'T\'HH:mm:ss\'.\'fff \'#\'"
   #ln.add msg.time.format(ft)
-  ln.add $msg.realTime
+  ln.add $msg.level
+  ln.add ": "
+  inc n
+  ln.add $n
   ln.add " #"
   ln.add $msg.thread
   ln.add " "
-  ln.add $msg.level
-  ln.add ": "
+  ln.add $msg.realTime
+  ln.add " "
   ln.add msg.message
   ln.add "\n"
   block:
