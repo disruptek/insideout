@@ -1,10 +1,12 @@
 import std/locks
 import std/posix
+import std/strformat
 
 import pkg/cps
 
 import insideout/mailboxes
 import insideout/runtimes
+import insideout/threads
 
 const backlogBuffer = 64*1024  ## number of log messages to buffer
 const backlogFile = "backlog.txt"
@@ -116,23 +118,14 @@ proc createMessage(level: Level; args: varargs[string, `$`]): LogMessage =
 
 proc `$`(ts: Timespec): string =
   var f = ts.tv_sec.float + ts.tv_nsec / 1_000_000_000
-  result = $f
+  result = fmt"{f:>10.6f}"
 
 proc emitLog(fd: Fd; msg: sink LogMessage) =
+  inc n
   var ln = newStringOfCap(48 + msg.message.len)
   #const ft = "yyyy-MM-dd\'T\'HH:mm:ss\'.\'fff \'#\'"
   #ln.add msg.time.format(ft)
-  ln.add $msg.level
-  ln.add ": "
-  inc n
-  ln.add $n
-  ln.add " #"
-  ln.add $msg.thread
-  ln.add " "
-  ln.add $msg.realTime
-  ln.add " "
-  ln.add msg.message
-  ln.add "\n"
+  ln.add &"{msg.level:<6s} {n:>3d} #{msg.thread:<5d} {msg.monoTime} {msg.message}\n"
   block:
     let ln = ln.cstring
     var wrote = 0
@@ -157,6 +150,8 @@ proc reader(queue: Mailbox[LogMessage]) {.cps: Continuation.} =
 
   when logLevel <= lvlNone:
     fd.emitLog lvlNone.stringMessage("hello backlog", thread = threadId)
+
+  discard pthread_setname_np(pthread_self(), "io: backlog")
 
   while true:
     var msg: LogMessage
