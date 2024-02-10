@@ -68,7 +68,8 @@ proc main() =
     doAssert runtime.mailbox == jobs
     var job = Job()
     info "[runtime] send"
-    jobs.send job
+    while Delivered != jobs.trySend(job):
+      discard
     info "[runtime] close"
     jobs.disablePush()
     info "[runtime] join"
