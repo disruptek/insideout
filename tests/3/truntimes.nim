@@ -57,7 +57,7 @@ proc main() =
 
   block:
     ## cancellation
-    notice "        cancellation"
+    notice "cancellation"
     var jobs = newMailbox[Job]()
     info "[cancel] spawn"
     var runtime = Service.spawn(jobs)
