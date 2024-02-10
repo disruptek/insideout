@@ -7,6 +7,8 @@ import std/macros
 import insideout/futex
 export checkWait, waitMask, wakeMask, FutexError
 
+from pkg/balls import checkpoint
+
 type
   AtomicFlags16* = Atomic[uint16]
   AtomicFlags32* = Atomic[uint32]
@@ -78,7 +80,12 @@ proc `!&&`*[T: FlagsInts](flags: T; mask: T): bool =
   ## the mask is not a subset of the flags
   not (flags && mask)
 
+proc put*[T: FlagsInts](flags: var Atomic[T]; value: T) =
+  store(flags, value, order = moSequentiallyConsistent)
+  atomicThreadFence ATOMIC_SEQ_CST
+
 proc get*[T: FlagsInts](flags: var Atomic[T]): T =
+  atomicThreadFence ATOMIC_SEQ_CST
   load(flags, order = moSequentiallyConsistent)
 
 proc contains*[T: FlagsInts](flags: var Atomic[T]; mask: T): bool =
@@ -96,30 +103,35 @@ proc contains*(flags: var AtomicFlags32; mask: uint32): bool =
 
 proc contains*(flags: AtomicFlags32; mask: uint32): bool {.error: "immutable flags".}
 
-proc toSet*[V](value: var AtomicFlags): set[V] {.error.} =
-  let value = get value
-  when nimvm:
-    for flag in V.items:
-      if 0 != (value and (<< flag)):
-        result.incl flag
-  else:
-    result = cast[set[V]](value)
+when false:
+  proc toSet*[V](value: var AtomicFlags): set[V] {.error.} =
+    let value = get value
+    when nimvm:
+      for flag in V.items:
+        if 0 != (value and (<< flag)):
+          result.incl flag
+    else:
+      result = cast[set[V]](value)
 
-macro waitMask*[V](flags: var AtomicFlags; mask: set[V]): cint =
-  newCall(bindSym"waitMask", flags, newCall(bindSym"<<", mask))
+  macro waitMask*[V](flags: var AtomicFlags; mask: set[V]): cint =
+    newCall(bindSym"waitMask", flags, newCall(bindSym"<<", mask))
 
-macro waitMaskNot*[V](flags: var AtomicFlags; mask: set[V]): cint =
-  newCall(bindSym"waitMask", flags, newCall(bindSym"<<!", mask))
+  macro waitMaskNot*[V](flags: var AtomicFlags; mask: set[V]): cint =
+    newCall(bindSym"waitMask", flags, newCall(bindSym"<<!", mask))
 
-macro wakeMask*[V](flags: var AtomicFlags; mask: set[V];
-                   count = high(cint)): cint {.discardable.} =
-  newCall(bindSym"wakeMask", flags, newCall(bindSym"<<", mask), count)
+  macro wakeMask*[V](flags: var AtomicFlags; mask: set[V];
+                     count = high(cint)): cint {.discardable.} =
+    newCall(bindSym"wakeMask", flags, newCall(bindSym"<<", mask), count)
 
-macro wakeMaskNot*[V](flags: var AtomicFlags; mask: set[V];
-                   count = high(cint)): cint {.discardable.} =
-  newCall(bindSym"wakeMask", flags, newCall(bindSym"<<!", mask), count)
+  macro wakeMaskNot*[V](flags: var AtomicFlags; mask: set[V];
+                     count = high(cint)): cint {.discardable.} =
+    newCall(bindSym"wakeMask", flags, newCall(bindSym"<<!", mask), count)
 
 proc swap*[T: FlagsInts](flags: var AtomicFlags; past, future: T): bool {.discardable.} =
+  assert past != 0, "missing past flags"
+  assert future != 0, "missing future flags"
+  assert 0 == (future and past), "flags appear in both past and future"
+
   when T is uint32:
     assert flags is AtomicFlags32
     var prior: uint32
@@ -127,21 +139,21 @@ proc swap*[T: FlagsInts](flags: var AtomicFlags; past, future: T): bool {.discar
     assert flags is AtomicFlags16
     var prior: uint16
   else:
-    {.error: "wut".}
-  let mask = bitnot(past)   # future flags not in past flags
-  when defined(danger):
-    # expect a normal transition
-    template test(): untyped = prior !&& future
-  else:
-    # check that the flags aren't corrupted somehow
-    template test(): untyped = (prior !&& mask) or (prior && past)
-    if future != bitand(mask, future):
-      raise Defect.newException "future flags contain past flags"
-  while test():
-    var value = bitor(bitand(mask, prior), future)
+    {.error: "unsupported AtomicFlags size".}
+
+  var value: T = 0  # NOTE: 0 is not a valid value for flags
+  while true:
+    #checkpoint getThreadId(), "past=", past, "future=", future, "value=", value, "prior=", prior, "attempt"
+    atomicThreadFence ATOMIC_SEQ_CST
     if compareExchange(flags, prior, value, order = moSequentiallyConsistent):
+      atomicThreadFence ATOMIC_SEQ_CST
+      #checkpoint getThreadId(), cast[uint](addr flags), "past=", past, "future=", future, "value=", value, "prior=", prior, "exchanged"
       return true
-  return false
+    if 0 == (prior and past) and future == (prior and future):
+      #checkpoint getThreadId(), cast[uint](addr flags), "past=", past, "future=", future, "value=", value, "prior=", prior, "unneeded"
+      break
+    else:
+      value = (prior xor past) or future
 
 macro enable*(flags: var AtomicFlags; flag: enum): bool =
   newCall(bindSym"swap", flags,

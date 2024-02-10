@@ -1,4 +1,5 @@
 import std/atomics
+import std/os
 
 import pkg/balls
 import pkg/cps
@@ -6,6 +7,13 @@ import pkg/cps
 import insideout/runtimes
 import insideout/mailboxes
 import insideout/backlog
+import insideout/valgrind
+
+let N =
+  if getEnv"GITHUB_ACTIONS" == "true" or not defined(danger) or isGrinding():
+    10_000
+  else:
+    100_000
 
 type
   Server = ref object of Continuation
@@ -13,7 +21,8 @@ type
 
 proc cooperate(c: Continuation): Continuation {.cpsMagic.} = c
 
-proc service(jobs: Mailbox[Job]) {.cps: Server.} =
+proc unblocking(jobs: Mailbox[Job]) {.cps: Server.} =
+  ## non-blocking receive
   debug "service began"
   while true:
     var job: Job
@@ -31,19 +40,30 @@ proc service(jobs: Mailbox[Job]) {.cps: Server.} =
     cooperate()
   debug "service ended"
 
-const Service = whelp service
+proc blocking(jobs: Mailbox[Job]) {.cps: Server.} =
+  ## blocking receive
+  debug "service began"
+  while true:
+    debug "service waiting"
+    var job = recv jobs
+    cooperate()
+  debug "service ended"
+
+const Unblocking = whelp unblocking
+const Blocking = whelp blocking
 
 proc main() =
 
   block:
-    ## runtime
+    ## non-blocking mailbox sniffer
     notice "runtime"
     let jobs = newMailbox[Job]()
     info "[runtime] spawn"
-    var runtime = Service.spawn(jobs)
+    var runtime = Unblocking.spawn(jobs)
     var other = runtime
     doAssert other.state == Running
     doAssert other == runtime
+    info "[runtime] pin"
     pinToCpu(other, 0)
     doAssert runtime.mailbox == jobs
     var job = Job()
@@ -56,16 +76,16 @@ proc main() =
     info "[runtime] done"
 
   block:
-    ## cancellation
+    ## blocking waitor cancellation
     notice "cancellation"
     var jobs = newMailbox[Job]()
     info "[cancel] spawn"
-    var runtime = Service.spawn(jobs)
+    var runtime = Blocking.spawn(jobs)
     info "[cancel] cancel"
     cancel runtime
     info "[cancel] join"
     join runtime
     info "[cancel] done"
 
-when isMainModule:
+for i in 1..N:
   main()

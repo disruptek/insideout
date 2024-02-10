@@ -88,8 +88,8 @@ initCond C
 
 proc cooperate(c: Continuation): Continuation {.cpsMagic.} = c
 
-let CLOCK_REALTIME_COARSE {.importc, header: "<time.h>".}: ClockId
-let CLOCK_MONOTONIC_COARSE {.importc, header: "<time.h>".}: ClockId
+let CLOCK_REALTIME_COARSE {.importc, header: "<time.h>", used.}: ClockId
+let CLOCK_MONOTONIC_COARSE {.importc, header: "<time.h>", used.}: ClockId
 
 var n: int
 

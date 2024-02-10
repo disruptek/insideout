@@ -22,8 +22,7 @@ type
     when T isnot void:
       queue: LoonyQueue[T]
       size: Atomic[int]
-      pad32: int32
-    state: AtomicFlags32
+    state {.align: 128.}: AtomicFlags32
 
 const
   Received* = Writable
@@ -35,11 +34,11 @@ proc pause*[T](ward: var Ward[T])
 
 proc initWard*[T: void](ward: var Ward[T]) =
   const flags = <<{Interrupt, Writable, Readable, Empty, Full, Bounded} + <<!{Paused}
-  store(ward.state, flags, order=moSequentiallyConsistent)
+  put(ward.state, flags)
 
 proc initWard*[T: not void](ward: var Ward[T]; queue: LoonyQueue[T]) =
   const flags = <<{Interrupt, Writable, Readable, Empty} + <<!{Full, Bounded, Paused}
-  store(ward.state, flags, order=moSequentiallyConsistent)
+  put(ward.state, flags)
   # support reinitialization
   if not ward.queue.isNil:
     pause ward
@@ -52,7 +51,7 @@ proc initWard*[T: not void](ward: var Ward[T]; queue: LoonyQueue[T]) =
 proc initWard*[T: not void](ward: var Ward[T]; queue: LoonyQueue[T];
                             size: Positive) =
   const flags = <<{Interrupt, Writable, Readable, Empty, Bounded} + <<!{Full, Paused, Interrupt}
-  store(ward.state, flags, order=moSequentiallyConsistent)
+  put(ward.state, flags)
   # support reinitialization
   if not ward.queue.isNil:
     pause ward
@@ -75,7 +74,7 @@ proc performWait[T](ward: var Ward[T]; has: FlagT; wants: FlagT): bool {.discard
   ## true if we had to wait; false otherwise
   result = has !&& wants
   if result:
-    checkWait waitMask(ward.state, has, wants)
+    checkWait waitMask(ward.state, has, wants, 5.0)
 
 proc performWait[T](ward: var Ward[T]; wants: FlagT): bool {.discardable.} =
   ## true if we waited, false if we already had the flags we wanted
@@ -159,7 +158,9 @@ proc performPush[T](ward: var Ward[T]; item: sink T): WardFlag =
   while true:
     var prior = 1
     # try to claim the last slot, and assign `prior`
+    atomicThreadFence ATOMIC_SEQ_CST
     if compareExchange(ward.size, prior, 0, order = moSequentiallyConsistent):
+      atomicThreadFence ATOMIC_SEQ_CST
       # we won the right to safely push
       result = unboundedPush(ward, item)
       # as expected, we're full
@@ -172,6 +173,7 @@ proc performPush[T](ward: var Ward[T]; item: sink T): WardFlag =
       break
     elif compareExchange(ward.size, prior, prior - 1,
                          order = moSequentiallyConsistent):
+      atomicThreadFence ATOMIC_SEQ_CST
       result = unboundedPush(ward, item)
       # XXX: we have some information about the queue:
       # it's readable, not empty, not full
@@ -245,7 +247,9 @@ proc performPop[T](ward: var Ward[T]; item: var T): WardFlag =
   if Received == result:
     # XXX: runtime check for boundedness
     if <<Bounded in ward.state:
+      atomicThreadFence ATOMIC_SEQ_CST
       let count = fetchAdd(ward.size, 1, order = moSequentiallyConsistent)
+      atomicThreadFence ATOMIC_SEQ_CST
       if 0 == count:
         if ward.state.disable Full:
           checkWake wakeMask(ward.state, <<!Full)
@@ -301,7 +305,7 @@ template withPaused[T](ward: var Ward[T]; body: typed): untyped =
   finally:
     resume ward
 
-proc clear*[T](ward: var Ward[T]) {.raises: [FutexError, IOError].} =
+proc clear*[T](ward: var Ward[T]) {.raises: [FutexError].} =
   when T isnot void:
     withPaused ward:
       while not pop(ward.queue).isNil:
