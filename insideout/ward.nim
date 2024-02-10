@@ -10,19 +10,20 @@ import insideout/atomic/flags
 
 type
   WardFlag* {.size: 2.} = enum       ## flags for ward state
-    Interrupt = 0  # tiny type overload for EINTR            1 / 65536
-    Paused    = 1  #                                         2 / 131072
-    Empty     = 2  #                                         4 / 262144
-    Full      = 3  #                                         8 / 524288
-    Readable  = 4  #                                        16 / 1048576
-    Writable  = 5  #                                        32 / 2097152
-    Bounded   = 6  #                                        64 / 4194304
+    Interrupt = 0  #    1 / 65536     tiny type overload for EINTR
+    Paused    = 1  #    2 / 131072
+    Empty     = 2  #    4 / 262144
+    Full      = 3  #    8 / 524288
+    Readable  = 4  #   16 / 1048576
+    Writable  = 5  #   32 / 2097152
+    Bounded   = 6  #   64 / 4194304
   FlagT = uint32
-  Ward*[T] = object
-    state: AtomicFlags32
+  Ward*[T: ref or ptr or void] = object
     when T isnot void:
-      size: Atomic[int]
       queue: LoonyQueue[T]
+      size: Atomic[int]
+      pad32: int32
+    state: AtomicFlags32
 
 const
   Received* = Writable
@@ -140,13 +141,13 @@ proc unboundedPush[T](ward: var Ward[T]; item: sink T): WardFlag =
   # optimistically declare the ward un-empty; a lost
   # race here simply wakes a waiter harmlessly
   if disable(ward.state, Empty):
-    checkWake wakeMask(ward.state, <<!Empty, 1)
+    checkWake wakeMask(ward.state, <<!Empty)
 
 proc markFull[T](ward: var Ward[T]): WardFlag =
   ## mark the ward as full and wake a waiter
   result = Full
   if enable(ward.state, Full):
-    checkWake wakeMask(ward.state, <<Full, 1)
+    checkWake wakeMask(ward.state, <<Full)
 
 proc performPush[T](ward: var Ward[T]; item: sink T): WardFlag =
   ## safely push an item onto the ward; returns Readable
@@ -228,7 +229,7 @@ proc markEmpty[T](ward: var Ward[T]): WardFlag =
   else:
     result = Empty
     if enable(ward.state, Empty):
-      checkWake wakeMask(ward.state, <<Empty, 1)
+      checkWake wakeMask(ward.state, <<Empty)
 
 proc unboundedPop[T](ward: var Ward[T]; item: var T): WardFlag =
   ## pop an item without regard to bounds
@@ -247,7 +248,7 @@ proc performPop[T](ward: var Ward[T]; item: var T): WardFlag =
       let count = fetchAdd(ward.size, 1, order = moSequentiallyConsistent)
       if 0 == count:
         if ward.state.disable Full:
-          checkWake wakeMask(ward.state, <<!Full, 1)
+          checkWake wakeMask(ward.state, <<!Full)
 
 proc tryPop*[T](ward: var Ward[T]; item: var T): WardFlag =
   ## fast success/fail pop of item
@@ -300,7 +301,7 @@ template withPaused[T](ward: var Ward[T]; body: typed): untyped =
   finally:
     resume ward
 
-proc clear*[T](ward: var Ward[T]) {.raises: FutexError.} =
+proc clear*[T](ward: var Ward[T]) {.raises: [FutexError, IOError].} =
   when T isnot void:
     withPaused ward:
       while not pop(ward.queue).isNil:

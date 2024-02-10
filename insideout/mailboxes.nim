@@ -19,7 +19,7 @@ type
 
 proc `=copy`*[T](dest: var MailboxObj[T]; src: MailboxObj[T]) {.error.}
 
-proc `=destroy`[T](box: var MailboxObj[T]) {.raises: FutexError.} =
+proc `=destroy`[T](box: var MailboxObj[T]) {.raises: [FutexError, IOError].} =
   mixin `=destroy`
   clear box.ward             # best-effort free of items in the queue
   `=destroy`(box.ward)       # destroy the ward
@@ -170,6 +170,6 @@ proc waitForFull*[T](mail: Mailbox[T]) =
   assert not mail.isNil
   waitForFull mail[].ward
 
-proc clear*[T](mail: Mailbox[T]) {.raises: FutexError.} =
+proc clear*[T](mail: Mailbox[T]) {.raises: [FutexError, IOError].} =
   assert not mail.isNil
   clear mail[].ward
