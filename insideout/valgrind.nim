@@ -50,3 +50,6 @@ const runningSanitizer =
     "-fsanitize=" in querySetting(SingleValueSetting.commandLine)
 proc isSanitizing*(): bool =
   get runningSanitizer
+
+template isGrinding*(): bool =
+  isUnderValgrind() or isSanitizing()
