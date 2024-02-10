@@ -1,71 +1,71 @@
 import std/atomics
-import std/os
-import std/strformat
 
 import pkg/balls
 import pkg/cps
 
-import pkg/insideout/runtimes
-import pkg/insideout/mailboxes
+import insideout/runtimes
+import insideout/mailboxes
+import insideout/backlog
 
 type
   Server = ref object of Continuation
   Job = ref object
-    flag: Atomic[bool]
 
 proc cooperate(c: Continuation): Continuation {.cpsMagic.} = c
 
 proc service(jobs: Mailbox[Job]) {.cps: Server.} =
-  debugEcho "service runs"
+  debug "service began"
   while true:
     var job: Job
     case jobs.tryRecv(job)
     of Received:
-      debugEcho "service receives flag: " & $job.flag
-      store(job.flag, not load(job.flag))
-      debugEcho "service toggling flag: " & $job.flag
+      discard
     of Unreadable:
+      debug "service lost input"
       break
     else:
+      debug "service waiting"
       if not jobs.waitForPoppable():
+        debug "service wait failed"
         break
     cooperate()
-  debugEcho "service exits"
+  debug "service ended"
 
 const Service = whelp service
 
 proc main() =
 
-  block balls_breaks_destructor_semantics:
-    block:
-      echo "\n\ntesting cancellation"
-      let jobs = newMailbox[Job]()
-      echo "spawn"
-      var runtime = Service.spawn(jobs)
-      echo "cancel"
-      cancel runtime
-      echo "join"
-      join runtime
-    block:
-      echo "run some time"
-      let jobs = newMailbox[Job]()
-      var runtime: Runtime[Server, Job] = Service.spawn(jobs)
-      var other = runtime
-      doAssert other.state in {Launching, Running}
-      doAssert other == runtime
-      pinToCpu(other, 0)
-      #doAssert runtime.state >= Running
-      doAssert runtime.mailbox == jobs
-      var job = Job()
-      store(job.flag, true)
-      jobs.send job
-      jobs.disablePush()
-      join runtime
-      when false:
-        doAssert runtime.state == Stopped
-        doAssert runtime.owners == 2, "expected 2 owners; it's " & $runtime.owners
-        reset other
-        doAssert runtime.owners == 1, "expected 1 owner; it's " & $runtime.owners
+  block:
+    ## runtime
+    notice "runtime"
+    let jobs = newMailbox[Job]()
+    info "[runtime] spawn"
+    var runtime = Service.spawn(jobs)
+    var other = runtime
+    doAssert other.state == Running
+    doAssert other == runtime
+    pinToCpu(other, 0)
+    doAssert runtime.mailbox == jobs
+    var job = Job()
+    info "[runtime] send"
+    jobs.send job
+    info "[runtime] close"
+    jobs.disablePush()
+    info "[runtime] join"
+    join runtime
+    info "[runtime] done"
+
+  block:
+    ## cancellation
+    notice "        cancellation"
+    var jobs = newMailbox[Job]()
+    info "[cancel] spawn"
+    var runtime = Service.spawn(jobs)
+    info "[cancel] cancel"
+    cancel runtime
+    info "[cancel] join"
+    join runtime
+    info "[cancel] done"
 
 when isMainModule:
   main()

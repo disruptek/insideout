@@ -53,9 +53,15 @@ doAssert y.load !&& <<{Small, Large}
 doAssert y.load !&& <<!{Medium}
 y.disable Large
 doAssert <<!Small in y
+doAssert <<Small notin y
 doAssert <<Medium in y
+doAssert <<!Medium notin y
 doAssert <<!Large in y
+doAssert <<Large notin y
 y.enable Large
 doAssert <<!Small in y
+doAssert <<Small notin y
 doAssert <<Medium in y
+doAssert <<!Medium notin y
 doAssert <<Large in y
+doAssert <<!Large notin y

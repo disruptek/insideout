@@ -1,5 +1,3 @@
-import std/posix
-
 import pkg/cps
 
 import insideout/mailboxes
@@ -54,7 +52,7 @@ proc main() =
       var runtime = spawn(Receiver, messages)
       messages.send:
         newMessage"hello, world!"
-      stop runtime
+      halt runtime
       join runtime
 
 main()

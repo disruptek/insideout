@@ -5,12 +5,9 @@ import pkg/cps
 import insideout/runtimes
 import insideout/mailboxes
 
-type
-  Service = Runtime[Continuation, Continuation]
-
 proc server(jobs: Mailbox[Continuation]) {.cps: Continuation.} =
   var job = recv jobs
-  discard trampoline job
+  discard trampoline(move job)
 
 proc sing(message: string) {.cps: Continuation.} =
   echo message
@@ -23,11 +20,12 @@ const Factory = whelp server
 proc main =
   var queue = newMailbox[Continuation]()
   queue.send:
-    whelp sing("hello, world!")
-
-  queue.send:
     whelp shout("i said, 'hello, world!'")
 
+  queue.send:
+    whelp sing("hello, world!")
+
   var service = spawn(Factory, queue)
+  join service
 
 main()
