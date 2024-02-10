@@ -93,7 +93,7 @@ let CLOCK_MONOTONIC_COARSE {.importc, header: "<time.h>".}: ClockId
 
 var n: int
 
-when defined(danger):
+when false and defined(danger):
   # faster but less accurate
   let rtClock = CLOCK_REALTIME_COARSE
   let mtClock = CLOCK_MONOTONIC_COARSE
