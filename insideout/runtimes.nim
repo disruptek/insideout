@@ -381,16 +381,14 @@ proc boot[A, B](runtime: var RuntimeObj[A, B];
     # if the flags changed at all, the thread launch is successful
     let e = checkWait wait(runtime.flags, bootFlags, 5.0)
     case e
-    of 0, EAGAIN:
-      if get(runtime.flags) != bootFlags:
-        return true
-      raise Defect.newException "spurious wakeup on boot"
+    of 0, EINTR, EAGAIN:
+      discard
     of ETIMEDOUT:
       raise Defect.newException "timeout in boot"
-    of EINTR:
-      discard
     else:
       raise Defect.newException "new thread failed to start"
+    if get(runtime.flags) != bootFlags:
+      return true
 
 proc spawn[A, void](runtime: var RuntimeObj[A, void]; continuation: sink A) =
   ## add compute to mailbox
