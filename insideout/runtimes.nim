@@ -300,7 +300,7 @@ proc dispatcher[A, B](runtime: sink Runtime[A, B]): cint =
         var temporary: Continuation = fn(runtime[].continuation)
         runtime[].continuation = A temporary
 
-        if runtime[].continuation.running:
+        if not runtime[].continuation.isNil and not runtime[].continuation.fn.isNil:
           dec phase  # check to see if we've been frozen
         else:
           break      # normal termination
