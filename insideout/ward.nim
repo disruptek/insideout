@@ -18,7 +18,7 @@ type
     Writable  = 5  #   32 / 2097152
     Bounded   = 6  #   64 / 4194304
   FlagT = uint32
-  Ward*[T: ref or ptr or void] = object
+  Ward*[T: ref or ptr or void] {.packed.} = object
     pad32: uint32
     state: AtomicFlags32
     when T isnot void:

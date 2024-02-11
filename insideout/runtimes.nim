@@ -32,7 +32,7 @@ type
     Frozen     = 1    # 2 / 131072
     Running    = 2    # 4 / 262144
 
-  RuntimeObj[A, B] = object
+  RuntimeObj[A, B] {.packed.} = object
     handle: PThread
     pad32: uint32
     flags: AtomicFlags32
