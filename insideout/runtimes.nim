@@ -119,7 +119,7 @@ proc kill[A, B](runtime: var RuntimeObj[A, B]): bool {.used.} =
 proc waitForFlags[A, B](runtime: var RuntimeObj[A, B]; wants: uint32) {.raises: [FutexError].} =
   while true:
     let has = get runtime.flags
-    if has && wants:
+    if 0 != (has and wants):
       break
     else:
       let e = checkWait waitMask(runtime.flags, has, wants, 5.0)
