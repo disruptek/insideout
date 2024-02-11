@@ -77,11 +77,6 @@ proc performWait[T](ward: var Ward[T]; has: FlagT; wants: FlagT): bool {.discard
   if result:
     checkWait waitMask(ward.state, has, wants, 5.0)
 
-proc performWait[T](ward: var Ward[T]; wants: FlagT): bool {.discardable.} =
-  ## true if we waited, false if we already had the flags we wanted
-  let state: FlagT = get ward.state
-  result = ward.performWait(state, wants)
-
 proc isEmpty*[T](ward: var Ward[T]): bool =
   when T is void:
     true
@@ -105,14 +100,14 @@ proc waitForPushable*[T](ward: var Ward[T]): bool =
     result = false
   elif state && <<Paused:
     result = true
-    discard ward.performWait(<<!{Writable, Paused})
+    discard ward.performWait(state, <<!{Writable, Paused})
   elif state && <<Full:
     # NOTE: short-circuit when the ward is full and unreadable
     if state && <<!Readable:
       result = false
     else:
       result = true
-      discard ward.performWait(<<!{Writable, Readable, Full})
+      discard ward.performWait(state, <<!{Writable, Readable, Full})
   else:
     result = true
 
@@ -123,14 +118,14 @@ proc waitForPoppable*[T](ward: var Ward[T]): bool =
     result = false
   elif state && <<Paused:
     result = true
-    discard ward.performWait(<<!{Readable, Paused})
+    discard ward.performWait(state, <<!{Readable, Paused})
   elif state && <<Empty:
     # NOTE: short-circuit when the ward is empty and unwritable
     if state && <<!Writable:
       result = false
     else:
       result = true
-      discard ward.performWait(<<!{Writable, Readable, Empty})
+      discard ward.performWait(state, <<!{Writable, Readable, Empty})
   else:
     result = true
 
@@ -209,9 +204,9 @@ proc push*[T](ward: var Ward[T]; item: var T): WardFlag =
     of Delivered, Unwritable:
       break
     of Full:
-      discard ward.performWait(<<!{Writable, Full})
+      discard ward.performWait(get(ward.state), <<!{Writable, Full})
     of Paused:
-      discard ward.performWait(<<!{Writable, Paused})
+      discard ward.performWait(get(ward.state), <<!{Writable, Paused})
     of Interrupt:
       break
     else:
@@ -275,9 +270,9 @@ proc pop*[T](ward: var Ward[T]; item: var T): WardFlag =
     of Unreadable, Received:
       break
     of Empty:
-      discard ward.performWait(<<!{Readable, Empty})
+      discard ward.performWait(get(ward.state), <<!{Readable, Empty})
     of Paused:
-      discard ward.performWait(<<!{Readable, Paused})
+      discard ward.performWait(get(ward.state), <<!{Readable, Paused})
     of Interrupt:
       break
     else:
