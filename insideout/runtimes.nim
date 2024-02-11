@@ -271,10 +271,10 @@ proc dispatcher[A, B](runtime: sink Runtime[A, B]): cint =
     case phase
     of 0:
       # boot the continuation if we haven't already done so
-      if dismissed runtime[].continuation:
+      if runtime[].continuation.isNil:
         runtime[].continuation = runtime[].factory.call(runtime[].mailbox)
       # check for a bogus/missing factory composition
-      if dismissed runtime[].continuation:
+      if runtime[].continuation.isNil:
         runtime[].error = ValueError.newException "nil continuation"
         nextIf 1
       else:
