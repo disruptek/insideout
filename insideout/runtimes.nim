@@ -33,8 +33,9 @@ type
     Running    = 2    # 4 / 262144
 
   RuntimeObj[A, B] = object
-    flags {.align: 128.}: AtomicFlags32
     handle: PThread
+    pad32: uint32
+    flags: AtomicFlags32
     #events: Fd
     #signals: Fd
     factory: Factory[A, B]
