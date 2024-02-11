@@ -31,10 +31,10 @@ proc `=destroy`*[T](arc: var AtomicRef[T]) =
 
 proc `=copy`*[T](dest: var AtomicRef[T]; src: AtomicRef[T]) =
   mixin `=destroy`
-  if not src.isNil:
-    discard fetchAdd(src.reference.rc, 1, order = moSequentiallyConsistent)
   if not dest.isNil:
     `=destroy`(dest)
+  if not src.isNil:
+    discard fetchAdd(src.reference.rc, 1, order = moSequentiallyConsistent)
   dest.reference = src.reference
 
 proc forget*[T](arc: AtomicRef[T]) =
