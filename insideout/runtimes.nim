@@ -118,13 +118,11 @@ proc kill[A, B](runtime: var RuntimeObj[A, B]): bool {.used.} =
 
 proc waitForFlags[A, B](runtime: var RuntimeObj[A, B]; wants: uint32) {.raises: [FutexError].} =
   while true:
-    atomicThreadFence ATOMIC_SEQ_CST
     let has = get runtime.flags
     if has && wants:
       break
     else:
       let e = checkWait waitMask(runtime.flags, has, wants, 5.0)
-      atomicThreadFence ATOMIC_SEQ_CST
       case e
       of 0, EAGAIN:
         discard
@@ -186,9 +184,9 @@ type
 proc deallocRuntime[A, B](runtime: pointer) {.noconv.} =
   ## called by the runtime to deallocate itself from its thread()
   # (we won't get another chance to properly decrement the rc on the runtime)
-  var runtime = cast[Runtime[A, B]](runtime)
-  doAssert (get(runtime[].flags) and <<!Running) == <<!Running
-  forget runtime
+  block:
+    var runtime = cast[Runtime[A, B]](runtime)
+    forget runtime
   when defined(gcOrc):
     {.warning: "insideout does not support orc memory management".}
     GC_runOrc()
@@ -197,19 +195,15 @@ proc teardown[A, B](p: pointer) {.noconv.} =
   ## we receive a pointer to a runtime object and we perform any necessary
   ## cleanup; this is run during thread destruction
   var runtime = cast[Runtime[A, B]](p)
-  #checkpoint getThreadId(), " ", cast[uint](addr runtime[].flags), " ENABLE HALTED"
   if runtime[].flags.enable Halted:
     checkWake wakeMask(runtime[].flags, <<Halted)
-  atomicThreadFence ATOMIC_SEQ_CST
   try:
-    #checkpoint getThreadId(), " ", cast[uint](addr runtime[].flags), " RESET CONTINUATION"
     try:
       reset runtime[].continuation
     except CatchableError as e:
       const cErrorMsg = "destroying " & $A & " continuation;"
       stdmsg().writeLine:
         renderError(e, cErrorMsg)
-    #checkpoint getThreadId(), " ", cast[uint](addr runtime[].flags), " RESET MAILBOX"
     try:
       reset runtime[].mailbox
     except CatchableError as e:
@@ -217,16 +211,9 @@ proc teardown[A, B](p: pointer) {.noconv.} =
       stdmsg().writeLine:
         renderError(e, mErrorMsg)
   finally:
-    #checkpoint getThreadId(), cast[uint](addr runtime[].flags), "DISABLE RUNNING"
-    discard runtime[].flags.disable Running
-    doAssert (get(runtime[].flags) and <<!Running) == <<!Running
-    #echo (get(runtime[].flags) and <<!Running), " and ", <<!Running, " and ", get(runtime[].flags)
+    store(runtime[].flags, <<!{Running, Frozen} or <<Halted)
     # tell everyone we're not running, even if we never ran
     checkWake wakeMask(runtime[].flags, <<!Running)
-    atomicThreadFence ATOMIC_SEQ_CST
-  doAssert (get(runtime[].flags) and <<!Running) == <<!Running
-  #checkpoint get(runtime[].flags)
-  atomicThreadFence ATOMIC_SEQ_CST
 
 template mayCancel(r: typed; body: typed): untyped {.used.} =
   var prior: cint
@@ -378,7 +365,7 @@ proc boot[A, B](runtime: var RuntimeObj[A, B];
   spawnCheck pthread_create(addr runtime.handle, addr attr, thread[A, B],
                             cast[pointer](addr runtime))
   spawnCheck pthread_attr_destroy(addr attr)
-  while true:
+  while get(runtime.flags) == bootFlags:
     # if the flags changed at all, the thread launch is successful
     let e = checkWait wait(runtime.flags, bootFlags, 5.0)
     case e
@@ -388,8 +375,6 @@ proc boot[A, B](runtime: var RuntimeObj[A, B];
       raise Defect.newException "timeout in boot"
     else:
       raise Defect.newException "new thread failed to start"
-    if get(runtime.flags) != bootFlags:
-      return true
 
 proc spawn[A, void](runtime: var RuntimeObj[A, void]; continuation: sink A) =
   ## add compute to mailbox
