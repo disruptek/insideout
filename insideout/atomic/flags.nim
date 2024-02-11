@@ -1,6 +1,5 @@
 # atomic bitset for generic enums
 import std/atomics
-import std/bitops
 import std/genasts
 import std/macros
 
@@ -65,20 +64,22 @@ macro `<<!`*[V: enum](flags: set[V]): untyped =
     (<< flags) shl (8 * sizeof(v))
 
 proc `||`*[T: FlagsInts](a, b: T): T =
-  ## expose bitor with a more natural name
-  bitor(a, b)
+  ## (a | b) with a more natural name
+  a or b
 
 proc `||=`*[T: FlagsInts](a: var T; b: T) =
-  ## bitor assignment with a more natural name
-  a = a || b
+  ## (a = a | b) with a more natural name
+  a = a or b
 
 proc `&&`*[T: FlagsInts](flags: T; mask: T): bool =
-  ## the mask is a subset of the flags
-  mask == bitand(flags, mask)
+  ## the mask is a subset of the flags, which is to say,
+  ## mask == (flags & mask)
+  mask == (flags and mask)
 
 proc `!&&`*[T: FlagsInts](flags: T; mask: T): bool =
-  ## the mask is not a subset of the flags
-  not (flags && mask)
+  ## the mask is NOT a subset of the flags, which is to say,
+  ## mask != (flags & mask)
+  mask != (flags and mask)
 
 proc put*[T: FlagsInts](flags: var Atomic[T]; value: T) =
   store(flags, value, order = moSequentiallyConsistent)
