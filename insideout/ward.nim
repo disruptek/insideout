@@ -73,9 +73,11 @@ proc newWard[T](size: Positive = defaultInitialSize): Ward[T] =
 
 proc performWait[T](ward: var Ward[T]; has: FlagT; wants: FlagT): bool {.discardable.} =
   ## true if we had to wait; false otherwise
-  result = has !&& wants
+  result = 0 == (has and wants)
+  # XXX: force it to true in order to provoke the futex bug
+  result = true
   if result:
-    checkWait waitMask(ward.state, has, wants, 5.0)
+    checkWait waitMask(ward.state, has, wants)
 
 proc isEmpty*[T](ward: var Ward[T]): bool =
   when T is void:
@@ -125,7 +127,11 @@ proc waitForPoppable*[T](ward: var Ward[T]): bool =
       result = false
     else:
       result = true
-      discard ward.performWait(state, <<!{Writable, Readable, Empty})
+      # XXX: other half of the bug
+      # this one doesn't work
+      discard ward.performWait(get(ward.state), <<!{Writable, Readable, Empty})
+      # this one works
+      #discard ward.performWait(state, <<!{Writable, Readable, Empty})
   else:
     result = true
 
