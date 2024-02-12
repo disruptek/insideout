@@ -19,11 +19,11 @@ type
     Bounded   = 6  #   64 / 4194304
   FlagT = uint32
   Ward*[T: ref or ptr or void] {.packed.} = object
-    pad32: uint32
-    state: AtomicFlags32
     when T isnot void:
       queue: LoonyQueue[T]
       size: Atomic[int]
+    pad32: uint32
+    state: AtomicFlags32
 
 const
   Received* = Writable
