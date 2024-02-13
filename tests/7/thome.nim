@@ -46,10 +46,6 @@ proc oracle(box: Mailbox[Query]) {.cps: Oracle.} =
     var query: Query
     var receipt: WardFlag = tryRecv(box, query)
     case receipt
-    of Paused, Empty:
-      if not waitForPoppable(box):
-        info "unavailable"
-        break
     of Unreadable:
       break
     of Received:
