@@ -31,45 +31,72 @@ const
   Unreadable* = Readable
   Unwritable* = Writable
 
+const voidFlags =
+  <<{Interrupt, Writable, Readable, Empty, Full, Bounded} + <<!{Paused}
+const unboundedFlags =
+  <<{Interrupt, Writable, Readable, Empty, Paused} + <<!{Full, Bounded}
+const boundedFlags =
+  <<{Interrupt, Writable, Readable, Empty, Paused, Bounded} + <<!{Full}
 proc pause*[T](ward: var Ward[T])
+proc resume*[T](ward: var Ward[T])
+
+proc clear*[T](ward: var Ward[T]) =
+  if not ward.queue.isNil:
+    while not pop(ward.queue).isNil:
+      discard
+
+proc `=destroy`*(ward: var Ward[void]) =
+  # reset the flags so that the subsequent wake will
+  # not be ignored for any reason
+  put(ward.state, voidFlags)
+  # wake all waiters on the flags in order to free any
+  # queued waiters in kernel space
+  checkWake wake(ward.state)
+
+proc `=destroy`*[T: not void](ward: var Ward[T]) =
+  # reset the flags so that the subsequent wake will
+  # not be ignored for any reason
+  let flags = get ward.state
+  if 0 != (flags and <<Bounded):
+    put(ward.state, boundedFlags)
+  else:
+    put(ward.state, unboundedFlags)
+  # wake all waiters on the flags in order to free any
+  # queued waiters in kernel space
+  checkWake wake(ward.state)
+  clear ward
+  reset ward.queue
+  store(ward.size, 0, order = moSequentiallyConsistent)
 
 proc initWard*[T: void](ward: var Ward[T]) =
-  const flags = <<{Interrupt, Writable, Readable, Empty, Full, Bounded} + <<!{Paused}
-  put(ward.state, flags)
+  put(ward.state, voidFlags)
 
 proc initWard*[T: not void](ward: var Ward[T]; queue: LoonyQueue[T]) =
-  const flags = <<{Interrupt, Writable, Readable, Empty} + <<!{Full, Bounded, Paused}
-  put(ward.state, flags)
+  put(ward.state, unboundedFlags)
   # support reinitialization
   if not ward.queue.isNil:
-    pause ward
-    while ward.queue.pop.isNil:
+    while not ward.queue.pop.isNil:
       discard
     reset ward.queue
-  store(ward.size, 0, order=moSequentiallyConsistent)
   ward.queue = queue
+  store(ward.size, 0, order = moSequentiallyConsistent)
+  resume ward
+  checkWake wake(ward.state)
 
 proc initWard*[T: not void](ward: var Ward[T]; queue: LoonyQueue[T];
                             size: Positive) =
-  const flags = <<{Interrupt, Writable, Readable, Empty, Bounded} + <<!{Full, Paused, Interrupt}
-  put(ward.state, flags)
+  put(ward.state, boundedFlags)
   # support reinitialization
   if not ward.queue.isNil:
-    pause ward
-    while ward.queue.pop.isNil:
+    while not ward.queue.pop.isNil:
       discard
     reset ward.queue
-  {.warning: "rare case, lazy; could save a store here".}
+  ward.queue = queue
+  store(ward.size, size, order = moSequentiallyConsistent)
   if 0 == size:
     ward.state.enable Full
-  store(ward.size, size, order=moSequentiallyConsistent)
-  ward.queue = queue
-
-proc newWard[T](): Ward[T] =
-  initWard(result, newLoonyQueue[T]())
-
-proc newWard[T](size: Positive = defaultInitialSize): Ward[T] =
-  initWard(result, newLoonyQueue[T](), size = size)
+  resume ward
+  checkWake wake(ward.state)
 
 proc performWait[T](ward: var Ward[T]; has: FlagT; wants: FlagT): bool {.discardable.} =
   ## true if we had to wait; false otherwise
@@ -289,19 +316,6 @@ proc pause*[T](ward: var Ward[T]) =
 proc resume*[T](ward: var Ward[T]) =
   if disable(ward.state, Paused):
     checkWake wakeMask(ward.state, <<!Paused)
-
-template withPaused[T](ward: var Ward[T]; body: typed): untyped =
-  pause ward
-  try:
-    body
-  finally:
-    resume ward
-
-proc clear*[T](ward: var Ward[T]) {.raises: [FutexError].} =
-  when T isnot void:
-    withPaused ward:
-      while not pop(ward.queue).isNil:
-        discard
 
 proc waitForEmpty*[T](ward: var Ward[T]) =
   while true:

@@ -172,4 +172,9 @@ proc waitForFull*[T](mail: Mailbox[T]) =
 
 proc clear*[T](mail: Mailbox[T]) {.raises: [FutexError].} =
   assert not mail.isNil
-  clear mail[].ward
+  when T isnot void:
+    pause mail[].ward
+    try:
+      clear mail[].ward
+    finally:
+      resume mail[].ward
