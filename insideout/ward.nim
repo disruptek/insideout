@@ -41,9 +41,10 @@ proc pause*[T](ward: var Ward[T])
 proc resume*[T](ward: var Ward[T])
 
 proc clear*[T](ward: var Ward[T]) =
-  if not ward.queue.isNil:
-    while not pop(ward.queue).isNil:
-      discard
+  when T isnot void:
+    if not ward.queue.isNil:
+      while not pop(ward.queue).isNil:
+        discard
 
 proc `=destroy`*(ward: var Ward[void]) =
   # reset the flags so that the subsequent wake will
