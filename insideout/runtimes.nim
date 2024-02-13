@@ -45,6 +45,9 @@ type
 
   Runtime*[A, B] = AtomicRef[RuntimeObj[A, B]]
 
+const deadFlags = <<Halted or <<!{Frozen, Running}
+const bootFlags = <<!{Halted, Frozen, Running}
+
 proc `=copy`*[A, B](runtime: var RuntimeObj[A, B]; other: RuntimeObj[A, B]) {.error.} =
   ## copies are denied
   discard
@@ -117,25 +120,26 @@ proc kill[A, B](runtime: var RuntimeObj[A, B]): bool {.used.} =
   signal(runtime, 9)
 
 proc waitForFlags[A, B](runtime: var RuntimeObj[A, B]; wants: uint32) {.raises: [FutexError].} =
-  while true:
-    let has = get runtime.flags
-    if 0 != (has and wants):
-      break
-    else:
-      let e = checkWait waitMask(runtime.flags, has, wants, 5.0)
-      case e
-      of 0, EAGAIN:
-        discard
-      of ETIMEDOUT:
+  var has = get runtime.flags
+  while 0 == (has and wants):
+    let e = checkWait waitMask(runtime.flags, has, wants, 5.0)
+    case e
+    of 0, EAGAIN:
+      discard
+    of ETIMEDOUT:
+      when not defined(danger):
         try:
           checkpoint getThreadId(), cast[uint](addr runtime.flags), "has:", has, "wants:", wants, "load:", get(runtime.flags), "timeout!"
         except IOError:
           discard
-        if (get(runtime.flags) and wants) != 0:
+        # one final re-check
+        has = get runtime.flags
+        if 0 != (has and wants):
           break
-        raise FutexError.newException "timeout waiting for runtime flags"
-      else:
-        raise Defect.newException "unexpected futex error: " & $e
+      raise FutexError.newException "timeout waiting for runtime flags"
+    else:
+      raise Defect.newException "unexpected futex error: " & $e
+    has = get runtime.flags
 
 proc join*[A, B](runtime: sink Runtime[A, B]) {.raises: [FutexError].} =
   ## block until the runtime has exited
@@ -149,9 +153,12 @@ proc cancel*[A, B](runtime: Runtime[A, B]): bool {.discardable.} =
   cancel runtime[]
 
 proc `=destroy`[A, B](runtime: var RuntimeObj[A, B]) =
-  when false:
-    const flags = <<Halted + <<!{Frozen, Running}
-    put(runtime.flags, flags)
+  # reset the flags so that the subsequent wake will
+  # not be ignored for any reason
+  put(runtime.flags, deadFlags)
+  # wake all waiters on the flags in order to free any
+  # queued waiters in kernel space
+  checkWake wake(runtime.flags)
   for key, value in runtime.fieldPairs:
     reset value
 
@@ -212,8 +219,9 @@ proc teardown[A, B](p: pointer) {.noconv.} =
         renderError(e, mErrorMsg)
   finally:
     store(runtime[].flags, <<!{Running, Frozen} or <<Halted)
-    # tell everyone we're not running, even if we never ran
-    checkWake wakeMask(runtime[].flags, <<!Running)
+    # wake all waiters on the flags in order to free any queued
+    # waiters in kernel space
+    checkWake wake(runtime[].flags)
 
 template mayCancel(r: typed; body: typed): untyped {.used.} =
   var prior: cint
@@ -360,7 +368,6 @@ proc boot[A, B](runtime: var RuntimeObj[A, B];
   spawnCheck pthread_attr_setstacksize(addr attr, size.cint)
 
   # i guess this is really happening...
-  const bootFlags = <<!{Halted, Frozen, Running}
   put(runtime.flags, bootFlags)
   spawnCheck pthread_create(addr runtime.handle, addr attr, thread[A, B],
                             cast[pointer](addr runtime))

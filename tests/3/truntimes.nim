@@ -13,7 +13,7 @@ let N =
   if getEnv"GITHUB_ACTIONS" == "true" or not defined(danger) or isGrinding():
     10_000
   else:
-    50_000
+    100_000
 
 type
   Server = ref object of Continuation
