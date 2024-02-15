@@ -7,8 +7,14 @@ import pkg/cps
 
 import insideout/runtimes
 import insideout/mailboxes
-import insideout/backlog
+#import insideout/backlog
 import insideout/pools/saferemove   # a hack around stdlib bug
+
+when false:
+  import insideout/backlog
+  export backlog
+else:
+  template debug(args: varargs[untyped]) = discard
 
 type
   PoolNode[A, B] {.used.} = SinglyLinkedNode[Runtime[A, B]]
@@ -34,7 +40,7 @@ proc drain[A, B](pool: var PoolObj[A, B]): Runtime[A, B] =
       if pool.list.safeRemove(pool.list.head):
         debug "removed ", result, " from pool."
       else:
-        fatal "race removing runtime from pool"
+        #debug "race removing runtime from pool"
         raise Defect.newException "remove race"
 
 proc drain*[A, B](pool: var Pool[A, B]): Runtime[A, B] {.discardable.} =

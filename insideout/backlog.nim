@@ -155,18 +155,11 @@ proc reader(queue: Mailbox[LogMessage]) {.cps: Continuation.} =
 
   while true:
     var msg: LogMessage
-    let r = queue.tryRecv(msg)
-    case r
-    of Unreadable:
-      break
+    case queue.tryRecv(msg)
     of Received:
       fd.emitLog(move msg)
-    of Empty:
-      if not queue.waitForPoppable():
-        break
-    else:
-      warn "log tryRecv " & $r
-      discard
+    elif not queue.waitForPoppable():
+      break
     cooperate()
 
   when logLevel <= lvlNone:
@@ -185,16 +178,10 @@ proc log*(level: Level; args: varargs[string, `$`]) {.raises: [].} =
   while true:
     let r = queue.trySend(message)
     case r
-    of Unwritable:
+    of Unwritable, Delivered:
       break
-    of Delivered:
+    elif not queue.waitForPushable():
       break
-    of Full:
-      if not queue.waitForPushable():
-        break
-    else:
-      warn "log trySend " & $r
-      discard
 
 # stuff the queue to identify the parent thread
 log(lvlNone, "program began")

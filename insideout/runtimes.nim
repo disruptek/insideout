@@ -32,9 +32,8 @@ type
     Frozen     = 1    # 2 / 131072
     Running    = 2    # 4 / 262144
 
-  RuntimeObj[A, B] {.packed.} = object
+  RuntimeObj[A, B] {.packed, byref.} = object
     handle: PThread
-    pad32: uint32
     flags: AtomicFlags32
     #events: Fd
     #signals: Fd
@@ -84,7 +83,7 @@ proc `$`(thread: PThread or SysThread): string =
   thread.hash.uint32.toHex()
 
 proc `$`(runtime: RuntimeObj): string =
-  $(cast[uint](addr runtime).toHex())
+  cast[int](addr runtime).toHex
 
 proc `$`*[A, B](runtime: Runtime[A, B]): string =
   assert not runtime.isNil
@@ -129,7 +128,7 @@ proc waitForFlags[A, B](runtime: var RuntimeObj[A, B]; wants: uint32) {.raises: 
     of ETIMEDOUT:
       when not defined(danger):
         try:
-          checkpoint getThreadId(), cast[uint](addr runtime.flags), "has:", has, "wants:", wants, "load:", get(runtime.flags), "timeout!"
+          checkpoint getThreadId(), cast[int](addr runtime.flags).toHex, "has:", has, "wants:", wants, "load:", get(runtime.flags), "timeout!"
         except IOError:
           discard
         # one final re-check
@@ -160,7 +159,17 @@ proc `=destroy`[A, B](runtime: var RuntimeObj[A, B]) =
   # queued waiters in kernel space
   checkWake wake(runtime.flags)
   for key, value in runtime.fieldPairs:
-    reset value
+    when key == "flags":
+      try:
+        checkpoint "destroy runtime flags at", cast[int](addr runtime.flags).toHex
+      except IOError:
+        discard
+    else:
+      try:
+        checkpoint "destroy runtime field", key
+      except IOError:
+        discard
+      reset value
 
 template assertReady(runtime: RuntimeObj): untyped =
   when not defined(danger):  # if this isn't dangerous, i don't know what is
@@ -372,6 +381,10 @@ proc boot[A, B](runtime: var RuntimeObj[A, B];
   spawnCheck pthread_create(addr runtime.handle, addr attr, thread[A, B],
                             cast[pointer](addr runtime))
   spawnCheck pthread_attr_destroy(addr attr)
+  try:
+    checkpoint A, "/", B, "runtime boot with flags at ", cast[int](addr runtime.flags).toHex
+  except IOError:
+    discard
   while get(runtime.flags) == bootFlags:
     # if the flags changed at all, the thread launch is successful
     let e = checkWait wait(runtime.flags, bootFlags, 5.0)

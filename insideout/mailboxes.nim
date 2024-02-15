@@ -23,11 +23,10 @@ type
     Writable  = 5  #   32 / 2097152
     Bounded   = 6  #   64 / 4194304
   FlagT = uint32
-  MailboxObj[T: ref or ptr or void] {.packed.} = object
+  MailboxObj[T: ref or ptr or void] {.packed, byref.} = object
     when T isnot void:
       queue: LoonyQueue[T]
       size: Atomic[int]
-    pad32: uint32
     state: AtomicFlags32
   Mailbox*[T] = AtomicRef[MailboxObj[T]]
 
@@ -46,21 +45,21 @@ const boundedFlags =
 
 proc `=copy`*[T](dest: var MailboxObj[T]; src: MailboxObj[T]) {.error.}
 
-proc pause*[T](mail: Mailbox[T])
 proc resume*[T](mail: Mailbox[T])
 
-proc clear*[T](mail: Mailbox[T]) =
-  when T isnot void:
-    if not mail[].queue.isNil:
-      while not pop(mail[].queue).isNil:
-        discard
-
 proc reveal*[T](mail: MailboxObj[T]): string =
-  $cast[uint](addr mail) & " : " & $cast[uint](addr mail.state)
+  $T & " " & cast[int](addr mail.state).toHex
 
 proc reveal*[T](mail: Mailbox[T]): string =
-  mail[].reveal
-
+  let x = cast[int](addr mail[].state)
+  let y = cast[int](address mail)
+  let z = cast[int](addr mail[])
+  #checkpoint "reveal: state/ptr/addr", x.toHex, y.toHex, z.toHex, y-x
+  assert y == z
+  when T isnot void:
+    assert x - y == 16
+  let s = $T & " " & cast[int](addr mail[].state).toHex
+  cast[int](address mail).toHex & " -> " & s
 
 proc `=destroy`*(mail: var MailboxObj[void]) =
   # reset the flags so that the subsequent wake will
@@ -74,30 +73,22 @@ proc `=destroy`*[T: not void](mail: var MailboxObj[T]) =
   # reset the flags so that the subsequent wake will
   # not be ignored for any reason
   let flags = get mail.state
-  let dirty = flags != 0
-  if dirty:
-    try:
-      checkpoint "destroying mail.state at", mail.reveal
-      checkpoint "mail.queue nil?", mail.queue.isNil
-    except IOError:
-      discard
+  try:
+    checkpoint "destroying mail:", mail.reveal
+  except IOError:
+    discard
   if 0 != (flags and <<Bounded):
     put(mail.state, boundedFlags)
   else:
     put(mail.state, unboundedFlags)
-  if dirty:
-    # wake all waiters on the flags in order to free any
-    # queued waiters in kernel space
-    checkWake wake(mail.state)
-    if not mail.queue.isNil:
-      while not pop(mail.queue).isNil:
-        discard
-    reset mail.queue
-    store(mail.size, 0, order = moSequentiallyConsistent)
-    try:
-      checkpoint "destroyed mail.state at", mail.reveal
-    except IOError:
+  # wake all waiters on the flags in order to free any
+  # queued waiters in kernel space
+  doAssert 0 == checkWake wake(mail.state)
+  if not mail.queue.isNil:
+    while not pop(mail.queue).isNil:
       discard
+  reset mail.queue
+  store(mail.size, 0, order = moSequentiallyConsistent)
 
 proc hash*(mail: Mailbox): Hash =
   ## whatfer inclusion in a table, etc.
@@ -124,6 +115,12 @@ proc `$`*[T](mail: Mailbox[T]): string =
     result.add: $mail.owners
     result.add ">"
 
+when false:
+  proc newMailbox*[T: void](): Mailbox[T] =
+    new result
+    put(result[].state, voidFlags)
+  #proc newMailbox*[T: not void](): Mailbox[T] =
+
 proc newMailbox*[T](): Mailbox[T] =
   ## create a new mailbox limited only by available memory
   new result
@@ -139,9 +136,9 @@ proc newMailbox*[T](): Mailbox[T] =
     result[].queue = newLoonyQueue[T]()
     store(result[].size, 0, order = moSequentiallyConsistent)
     resume result
-    checkWake wake(result[].state)
+    doAssert 0 == checkWake wake(result[].state)
     try:
-      checkpoint "initialized mail.state at", result.reveal
+      checkpoint "initialized mail:", result.reveal
     except IOError:
       discard
 
@@ -159,11 +156,7 @@ proc newMailbox*[T: not void](size: Positive): Mailbox[T] =
   if 0 == size:
     result[].state.enable Full
   resume result
-  checkWake wake(result[].state)
-  try:
-    checkpoint "initialized mail.state at", result.reveal
-  except IOError:
-    discard
+  doAssert 0 == checkWake wake(result[].state)
 
 proc performWait[T](mail: Mailbox[T]; has: FlagT; wants: FlagT): bool {.discardable.} =
   ## true if we had to wait; false otherwise
@@ -172,6 +165,7 @@ proc performWait[T](mail: Mailbox[T]; has: FlagT; wants: FlagT): bool {.discarda
     checkWait waitMask(mail[].state, has, wants)
 
 proc isEmpty*[T](mail: Mailbox[T]): bool =
+  assert not mail.isNil
   when T is void:
     true
   else:
@@ -180,6 +174,7 @@ proc isEmpty*[T](mail: Mailbox[T]): bool =
     result = state && <<Empty
 
 proc isFull*[T](mail: Mailbox[T]): bool =
+  assert not mail.isNil
   when T is void:
     true
   else:
@@ -391,6 +386,12 @@ proc resume*[T](mail: Mailbox[T]) =
   assert not mail.isNil
   if disable(mail[].state, Paused):
     checkWake wakeMask(mail[].state, <<!Paused)
+
+proc clear*[T](mail: Mailbox[T]) =
+  when T isnot void:
+    if not mail[].queue.isNil:
+      while not pop(mail[].queue).isNil:
+        discard
 
 proc waitForEmpty*[T](mail: Mailbox[T]) =
   assert not mail.isNil

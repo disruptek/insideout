@@ -2,6 +2,7 @@
 import std/atomics
 import std/genasts
 import std/macros
+import std/strutils
 
 import insideout/futex
 export checkWait, waitMask, wakeMask, FutexError
@@ -21,11 +22,6 @@ template flagType*(flag: typedesc[enum]): untyped =
     uint32
   else:
     {.error: "supported flag sizes are 1 and 2 bytes".}
-
-type
-  e {.pure.} = enum x, y
-
-doAssert flagType(e) is uint16
 
 macro flagType*(flag: enum): untyped =
   newCall(bindSym"flagType", newCall(bindSym"typeOf", flag))
@@ -92,17 +88,11 @@ proc get*[T: FlagsInts](flags: var Atomic[T]): T =
 proc contains*[T: FlagsInts](flags: var Atomic[T]; mask: T): bool =
   get(flags) && mask
 
-proc contains*[T: FlagsInts](flags: Atomic[T]; mask: T): bool {.error: "immutable flags".}
-
 proc contains*(flags: var AtomicFlags16; mask: uint16): bool =
   get(flags) && mask
 
-proc contains*(flags: AtomicFlags16; mask: uint16): bool {.error: "immutable flags".}
-
 proc contains*(flags: var AtomicFlags32; mask: uint32): bool =
   get(flags) && mask
-
-proc contains*(flags: AtomicFlags32; mask: uint32): bool {.error: "immutable flags".}
 
 when false:
   proc toSet*[V](value: var AtomicFlags): set[V] {.error.} =
