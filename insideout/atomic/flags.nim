@@ -94,30 +94,6 @@ proc contains*(flags: var AtomicFlags16; mask: uint16): bool =
 proc contains*(flags: var AtomicFlags32; mask: uint32): bool =
   get(flags) && mask
 
-when false:
-  proc toSet*[V](value: var AtomicFlags): set[V] {.error.} =
-    let value = get value
-    when nimvm:
-      for flag in V.items:
-        if 0 != (value and (<< flag)):
-          result.incl flag
-    else:
-      result = cast[set[V]](value)
-
-  macro waitMask*[V](flags: var AtomicFlags; mask: set[V]): cint =
-    newCall(bindSym"waitMask", flags, newCall(bindSym"<<", mask))
-
-  macro waitMaskNot*[V](flags: var AtomicFlags; mask: set[V]): cint =
-    newCall(bindSym"waitMask", flags, newCall(bindSym"<<!", mask))
-
-  macro wakeMask*[V](flags: var AtomicFlags; mask: set[V];
-                     count = high(cint)): cint {.discardable.} =
-    newCall(bindSym"wakeMask", flags, newCall(bindSym"<<", mask), count)
-
-  macro wakeMaskNot*[V](flags: var AtomicFlags; mask: set[V];
-                     count = high(cint)): cint {.discardable.} =
-    newCall(bindSym"wakeMask", flags, newCall(bindSym"<<!", mask), count)
-
 proc swap*[T: FlagsInts](flags: var AtomicFlags; past, future: T): bool {.discardable.} =
   assert past != 0, "missing past flags"
   assert future != 0, "missing future flags"
