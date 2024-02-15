@@ -99,11 +99,6 @@ proc `==`*(a, b: Runtime): bool =
   assert not b.isNil
   a.address == b.address
 
-proc halt*[A, B](runtime: Runtime[A, B]): bool {.discardable.} =
-  ## ask the runtime to exit; true if the runtime wasn't already halted
-  assert not runtime.isNil
-  runtime[].flags.enable Halted
-
 proc cancel[A, B](runtime: var RuntimeObj[A, B]): bool {.discardable.} =
   ## cancel a runtime; true if successful
   result = 0 == pthread_cancel(runtime.handle)
@@ -139,6 +134,12 @@ proc waitForFlags[A, B](runtime: var RuntimeObj[A, B]; wants: uint32) {.raises: 
     else:
       raise Defect.newException "unexpected futex error: " & $e
     has = get runtime.flags
+
+proc halt*[A, B](runtime: Runtime[A, B]): bool {.discardable.} =
+  ## ask the runtime to exit; true if the runtime wasn't already halted
+  assert not runtime.isNil
+  result = runtime[].flags.enable Halted
+  discard signal(runtime[], SIGINT)
 
 proc join*[A, B](runtime: sink Runtime[A, B]) {.raises: [FutexError].} =
   ## block until the runtime has exited
