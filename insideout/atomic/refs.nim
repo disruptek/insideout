@@ -18,6 +18,11 @@ proc isNil*[T](arc: AtomicRef[T]): bool =
 
 from pkg/balls import checkpoint
 
+proc debug[T](arc: AtomicRef[T]; s: string; m: string) =
+  when not defined(release):
+    if not arc.reference.isNil:
+      checkpoint s & ":", T, cast[int](arc.reference).toHex.toLowerAscii, m
+
 proc `=destroy`*[T](arc: var AtomicRef[T]) =
   mixin `=destroy`
   if not arc.reference.isNil:
@@ -25,34 +30,34 @@ proc `=destroy`*[T](arc: var AtomicRef[T]) =
     if 0 == n:
       happensAfter(addr arc.reference[].rc)
       happensBeforeForgetAll(addr arc.reference[].rc)
-      checkpoint "!ref:", $T, cast[int](arc.reference).toHex, " (destroy)"
+      arc.debug "!ref", "(destroy)"
       `=destroy`(arc.reference[])
       deallocShared arc.reference
       arc.reference = nil
     else:
-      checkpoint "-ref:", $T, cast[int](arc.reference).toHex, load(arc.reference[].rc)
+      arc.debug "-ref", "(destroy)"
       happensBefore(addr arc.reference[].rc)
       arc.reference = nil
 
 proc `=copy`*[T](target: var AtomicRef[T]; source: AtomicRef[T]) =
   mixin `=destroy`
   if not target.isNil:
-    checkpoint "<ref:", $T, cast[int](target.reference).toHex, load(target.reference[].rc)
+    target.debug "<ref", "(copy)"
     `=destroy`(target)
   if not source.isNil:
     discard fetchAdd(source.reference.rc, 1, order = moSequentiallyConsistent)
-    checkpoint "+ref:", $T, cast[int](source.reference).toHex, load(source.reference[].rc)
+    source.debug "+ref", "(copy)"
   target.reference = source.reference
 
 proc forget*[T](arc: AtomicRef[T]) =
   if not arc.isNil:
     discard fetchSub(arc.reference.rc, 1, order = moSequentiallyConsistent)
-    checkpoint "-ref:", $T, cast[int](arc.reference).toHex, load(arc.reference.rc)
+    arc.debug "-ref", "(forget)"
 
 proc remember*[T](arc: AtomicRef[T]) =
   if not arc.isNil:
     discard fetchAdd(arc.reference.rc, 1, order = moSequentiallyConsistent)
-    checkpoint "+ref:", $T, cast[int](arc.reference).toHex, load(arc.reference.rc)
+    arc.debug "+ref", "(remember)"
 
 proc owners*[T](arc: AtomicRef[T]): int =
   ## returns the number of owners; this value is positive for
@@ -64,12 +69,12 @@ proc owners*[T](arc: AtomicRef[T]): int =
 
 proc new*[T](arc: var AtomicRef[T]) =
   if not arc.isNil:
-    checkpoint ">ref:", $T, cast[int](arc.reference).toHex, load(arc.reference[].rc)
+    arc.debug ">ref", "(new)"
     `=destroy`(arc)
   arc.reference = cast[ptr Reference[T]](allocShared0(sizeof Reference[T]))
   if arc.reference.isNil:
     raise OSError.newException "unable to alloc memory for AtomicRef"
-  checkpoint "+ref:", $T, cast[int](arc.reference).toHex, load(arc.reference[].rc)
+  arc.debug "+ref", "(new)"
 
 proc `[]`*[T](arc: AtomicRef[T]): var T =
   when defined(danger):

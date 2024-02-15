@@ -48,7 +48,7 @@ proc `=copy`*[T](dest: var MailboxObj[T]; src: MailboxObj[T]) {.error.}
 proc resume*[T](mail: Mailbox[T])
 
 proc reveal*[T](mail: MailboxObj[T]): string =
-  $T & " " & cast[int](addr mail.state).toHex
+  $T & " " & cast[int](addr mail.state).toHex.toLowerAscii
 
 proc reveal*[T](mail: Mailbox[T]): string =
   let x = cast[int](addr mail[].state)
@@ -58,8 +58,8 @@ proc reveal*[T](mail: Mailbox[T]): string =
   assert y == z
   when T isnot void:
     assert x - y == 16
-  let s = $T & " " & cast[int](addr mail[].state).toHex
-  cast[int](address mail).toHex & " -> " & s
+  let s = $T & " " & cast[int](addr mail[].state).toHex.toLowerAscii
+  cast[int](address mail).toHex.toLowerAscii & " -> " & s
 
 proc `=destroy`*(mail: var MailboxObj[void]) =
   # reset the flags so that the subsequent wake will
