@@ -9,7 +9,7 @@ type
   AtomicLamp = AtomicFlags16
 
 static:
-  doAssert flagType(Lamp) == uint16
+  doAssert flagType(Lamp) is uint16
   doAssert <<Red == 1
 doAssert <<{Red, Blue} == 3
 var x: AtomicFlags16
@@ -34,7 +34,7 @@ type
     Large
 
 static:
-  doAssert flagType(Size) == uint32
+  doAssert flagType(Size) is uint32
   doAssert <<Small == 1
 var y: AtomicFlags32
 store(y, <<{Small, Medium} + <<!Large, order = moSequentiallyConsistent)
