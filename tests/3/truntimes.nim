@@ -28,16 +28,10 @@ proc unblocking(jobs: Mailbox[Job]) {.cps: Server.} =
     var job: Job
     case jobs.tryRecv(job)
     of Received:
-      discard
-    of Unreadable:
-      #debug "service lost input"
+      cooperate()
+    elif not jobs.waitForPoppable():
+      #debug "service wait failed"
       break
-    else:
-      #debug "service waiting"
-      if not jobs.waitForPoppable():
-        #debug "service wait failed"
-        break
-    cooperate()
   #debug "service ended"
 
 proc blocking(jobs: Mailbox[Job]) {.cps: Server.} =
@@ -64,29 +58,29 @@ proc main() =
     doAssert other.state == Running
     doAssert other == runtime
     #info "[runtime] pin"
-    pinToCpu(other, 0)
+    #pinToCpu(other, 0)
     doAssert runtime.mailbox == jobs
     var job = Job()
     #info "[runtime] send"
     while Delivered != jobs.trySend(job):
       discard
     #info "[runtime] close"
-    jobs.disablePush()
+    jobs.closeWrite()
     #info "[runtime] join"
     join runtime
     #info "[runtime] done"
 
   when false: #block:
     ## blocking waitor cancellation
-    notice "cancellation"
+    #notice "cancellation"
     var jobs = newMailbox[Job]()
-    info "[cancel] spawn"
+    #info "[cancel] spawn"
     var runtime = Blocking.spawn(jobs)
-    info "[cancel] cancel"
+    #info "[cancel] cancel"
     cancel runtime
-    info "[cancel] join"
+    #info "[cancel] join"
     join runtime
-    info "[cancel] done"
+    #info "[cancel] done"
 
 for i in 1..N:
   main()

@@ -53,6 +53,5 @@ proc main() =
       messages.send:
         newMessage"hello, world!"
       halt runtime
-      join runtime
 
 main()

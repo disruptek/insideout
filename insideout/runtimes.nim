@@ -153,7 +153,7 @@ proc cancel*[A, B](runtime: Runtime[A, B]): bool {.discardable.} =
   cancel runtime[]
 
 proc `=destroy`[A, B](runtime: var RuntimeObj[A, B]) =
-  checkpoint "=destroy runtime"
+  #checkpoint "=destroy runtime"
   # reset the flags so that the subsequent wake will
   # not be ignored for any reason
   put(runtime.flags, deadFlags)
@@ -163,12 +163,14 @@ proc `=destroy`[A, B](runtime: var RuntimeObj[A, B]) =
   for key, value in runtime.fieldPairs:
     when key == "flags":
       try:
-        checkpoint "=destroy runtime flags at", cast[int](addr runtime.flags).toHex.toLowerAscii
+        #checkpoint "=destroy runtime flags at", cast[int](addr runtime.flags).toHex.toLowerAscii
+        discard
       except IOError:
         discard
     else:
       try:
-        checkpoint "=destroy runtime field", key
+        #checkpoint "=destroy runtime field", key
+        discard
       except IOError:
         discard
       reset value
@@ -222,20 +224,20 @@ proc teardown[A, B](p: pointer) {.noconv.} =
       const cErrorMsg = "destroying " & $A & " continuation;"
       stdmsg().writeLine:
         renderError(e, cErrorMsg)
-    checkpoint "runtime done with continuation"
+    #checkpoint "runtime done with continuation"
     try:
       reset runtime[].mailbox
     except CatchableError as e:
       const mErrorMsg = "discarding " & $B & " mailbox;"
       stdmsg().writeLine:
         renderError(e, mErrorMsg)
-    checkpoint "runtime done with mailbox"
+    #checkpoint "runtime done with mailbox"
   finally:
     store(runtime[].flags, <<!{Running, Frozen} or <<Halted)
     # wake all waiters on the flags in order to free any queued
     # waiters in kernel space
     checkWake wake(runtime[].flags)
-  checkpoint "runtime teardown complete"
+  #checkpoint "runtime teardown complete"
 
 template mayCancel(r: typed; body: typed): untyped {.used.} =
   var prior: cint
@@ -387,7 +389,8 @@ proc boot[A, B](runtime: var RuntimeObj[A, B];
                             cast[pointer](addr runtime))
   spawnCheck pthread_attr_destroy(addr attr)
   try:
-    checkpoint A, "/", B, "runtime boot with flags at ", cast[int](addr runtime.flags).toHex.toLowerAscii
+    #checkpoint A, "/", B, "runtime boot with flags at ", cast[int](addr runtime.flags).toHex.toLowerAscii
+    discard
   except IOError:
     discard
   while get(runtime.flags) == bootFlags:

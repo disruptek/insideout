@@ -74,7 +74,8 @@ proc `=destroy`*[T: not void](mail: var MailboxObj[T]) =
   # not be ignored for any reason
   let flags = get mail.state
   try:
-    checkpoint "destroying mail:", mail.reveal
+    #checkpoint "destroying mail:", mail.reveal
+    discard
   except IOError:
     discard
   if 0 != (flags and <<Bounded):
@@ -138,7 +139,8 @@ proc newMailbox*[T](): Mailbox[T] =
     resume result
     doAssert 0 == checkWake wake(result[].state)
     try:
-      checkpoint "initialized mail:", result.reveal
+      #checkpoint "initialized mail:", result.reveal
+      discard
     except IOError:
       discard
 
