@@ -9,7 +9,7 @@ import pkg/cps
 
 import insideout
 import insideout/valgrind
-import insideout/backlog
+#import insideout/backlog
 
 let N =
   if getEnv"GITHUB_ACTIONS" == "true" or not defined(danger) or isGrinding():
@@ -37,7 +37,7 @@ proc attempt(N: Positive; cores: int = countProcessors()) =
   let now = getTime()
   var queues: seq[Mailbox[ref int]]
   block:
-    info "filling queues with ", N, " work items"
+    #info "filling queues with ", N, " work items"
     var fills = newMailbox[Continuation]()
     var drains = newMailbox[Continuation]()
     var m = cores
@@ -56,7 +56,7 @@ proc attempt(N: Positive; cores: int = countProcessors()) =
   let clock = (getTime() - now).inMilliseconds.float / 1000.0
   let rate = N.float / clock
   let perCore = rate / cores.float
-  notice fmt"{cores:>2d}core = {clock:>10.4f}s, {rate:>10.0f}/sec, {perCore:>10.0f}/core; "
+  #notice fmt"{cores:>2d}core = {clock:>10.4f}s, {rate:>10.0f}/sec, {perCore:>10.0f}/core; "
 
 proc main =
   var cores = @[countProcessors()]
@@ -64,13 +64,15 @@ proc main =
   if paramCount() > 1:
     cores = @[parseInt paramStr(2)]
   else:
-    notice "pass integer as second argument to set number of cores"
-    notice "defaulting to ", cores
+    #notice "pass integer as second argument to set number of cores"
+    #notice "defaulting to ", cores
+    discard
   if paramCount() > 0:
     N = parseInt paramStr(1)
   else:
-    notice "pass integer as first argument to set test size"
-    notice "defaulting to ", N
+    #notice "pass integer as first argument to set test size"
+    #notice "defaulting to ", N
+    discard
   for n in cores.items:
     attempt(N, n)
 

@@ -32,7 +32,7 @@ type
     Frozen     = 1    # 2 / 131072
     Running    = 2    # 4 / 262144
 
-  RuntimeObj[A, B] {.packed, byref.} = object
+  RuntimeObj[A, B] = object
     handle: PThread
     flags: AtomicFlags32
     #events: Fd
@@ -174,13 +174,6 @@ proc `=destroy`[A, B](runtime: var RuntimeObj[A, B]) =
       except IOError:
         discard
       reset value
-
-template assertReady(runtime: RuntimeObj): untyped =
-  when not defined(danger):  # if this isn't dangerous, i don't know what is
-    if runtime.mailbox.isNil:
-      raise ValueError.newException "nil mailbox"
-    elif runtime.factory.fn.isNil:
-      raise ValueError.newException "nil factory function"
 
 proc renderError(e: ref Exception; s = "crash;"): string =
   result = newStringOfCap(16 + s.len + e.name.len + e.msg.len)
@@ -377,7 +370,7 @@ template spawnCheck(err: cint): untyped =
     raise SpawnError.newException: $strerror(e)
 
 proc boot[A, B](runtime: var RuntimeObj[A, B];
-                size = insideoutStackSize): bool {.discardable.} =
+                size = insideoutStackSize) =
   var attr {.noinit.}: PThreadAttr
   spawnCheck pthread_attr_init(addr attr)
   spawnCheck pthread_attr_setdetachstate(addr attr, PTHREAD_CREATE_DETACHED.cint)
@@ -388,11 +381,12 @@ proc boot[A, B](runtime: var RuntimeObj[A, B];
   spawnCheck pthread_create(addr runtime.handle, addr attr, thread[A, B],
                             cast[pointer](addr runtime))
   spawnCheck pthread_attr_destroy(addr attr)
-  try:
-    #checkpoint A, "/", B, "runtime boot with flags at ", cast[int](addr runtime.flags).toHex.toLowerAscii
-    discard
-  except IOError:
-    discard
+  when false:
+    try:
+      checkpoint A, "/", B, "runtime boot with flags at ", cast[int](addr runtime.flags).toHex.toLowerAscii
+      discard
+    except IOError:
+      discard
   while get(runtime.flags) == bootFlags:
     # if the flags changed at all, the thread launch is successful
     let e = checkWait wait(runtime.flags, bootFlags, 5.0)
@@ -414,7 +408,13 @@ proc spawn[A, B](runtime: var RuntimeObj[A, B]; factory: Factory[A, B]; mailbox:
   ## add compute to mailbox
   runtime.factory = factory
   runtime.mailbox = mailbox
-  assertReady runtime
+  #assertReady runtime
+  #template assertReady(runtime: RuntimeObj): untyped =
+  when not defined(danger):  # if this isn't dangerous, i don't know what is
+    if runtime.mailbox.isNil:
+      raise ValueError.newException "nil mailbox"
+    elif runtime.factory.fn.isNil:
+      raise ValueError.newException "nil factory function"
   boot runtime
 
 proc spawn*[A, B](factory: Factory[A, B]; mailbox: Mailbox[B]): Runtime[A, B] =

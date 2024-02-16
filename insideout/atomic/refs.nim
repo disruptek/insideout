@@ -48,7 +48,7 @@ proc `=copy`*[T](target: var AtomicRef[T]; source: AtomicRef[T]) =
   if not source.isNil:
     discard fetchAdd(source.reference.rc, 1, order = moSequentiallyConsistent)
     source.debug "+ref", "(copy)"
-  target.reference = source.reference
+    target.reference = source.reference
 
 proc forget*[T](arc: AtomicRef[T]) =
   if not arc.isNil:
@@ -89,4 +89,5 @@ proc `[]`*[T](arc: AtomicRef[T]): var T =
 proc address*(arc: AtomicRef): pointer =
   arc.reference
 
-converter dereference*[T](arc: AtomicRef[T]): var T = arc[]
+when false:
+  converter dereference*[T](arc: AtomicRef[T]): var T = arc[]

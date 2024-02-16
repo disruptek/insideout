@@ -23,7 +23,9 @@ type
     Writable  = 5  #   32 / 2097152
     Bounded   = 6  #   64 / 4194304
   FlagT = uint32
-  MailboxObj[T: ref or ptr or void] {.packed, byref.} = object
+
+  # we need a .byref. while the object is so small
+  MailboxObj[T: ref or ptr or void] {.byref.} = object
     when T isnot void:
       queue: LoonyQueue[T]
       size: Atomic[int]
@@ -73,11 +75,11 @@ proc `=destroy`*[T: not void](mail: var MailboxObj[T]) =
   # reset the flags so that the subsequent wake will
   # not be ignored for any reason
   let flags = get mail.state
-  try:
-    #checkpoint "destroying mail:", mail.reveal
-    discard
-  except IOError:
-    discard
+  when false:
+    try:
+      checkpoint "destroying mail:", mail.reveal
+    except IOError:
+      discard
   if 0 != (flags and <<Bounded):
     put(mail.state, boundedFlags)
   else:
@@ -138,11 +140,11 @@ proc newMailbox*[T](): Mailbox[T] =
     store(result[].size, 0, order = moSequentiallyConsistent)
     resume result
     doAssert 0 == checkWake wake(result[].state)
-    try:
-      #checkpoint "initialized mail:", result.reveal
-      discard
-    except IOError:
-      discard
+    when false:
+      try:
+        checkpoint "initialized mail:", result.reveal
+      except IOError:
+        discard
 
 proc newMailbox*[T: not void](size: Positive): Mailbox[T] =
   ## create a new mailbox which can hold `size` items
