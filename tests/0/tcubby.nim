@@ -15,7 +15,11 @@ proc main =
   doAssert not c.hasFlag
   c.toggle
   doAssert c.hasFlag
+  c.enable
+  doAssert c.hasFlag
   c.toggle
+  doAssert not c.hasFlag
+  c.disable
   doAssert not c.hasFlag
 
 main()
