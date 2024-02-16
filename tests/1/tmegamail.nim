@@ -3,16 +3,16 @@ import std/os
 import insideout/mailboxes
 import insideout/valgrind
 
-let N =
+let N: uint32 =
   if getEnv"GITHUB_ACTIONS" == "true" or not defined(danger) or isGrinding():
     10_000_000
   else:
     100_000_000
 
-type RI = ref int
+type RI = ref uint32
 
-proc ri(i: int): RI =
-  result = new int
+proc ri(i: uint32): RI =
+  result = new uint32
   result[] = i
 
 proc main =

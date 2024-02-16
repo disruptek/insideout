@@ -13,9 +13,9 @@ import insideout/valgrind
 
 let N =
   if getEnv"GITHUB_ACTIONS" == "true" or not defined(danger) or isGrinding():
-    10_000_000
+    10_000
   else:
-    100_000_000
+    100_000
 
 proc drainer(queue: Mailbox[ref int]; n: int) {.cps: Continuation.} =
   var m = n

@@ -21,6 +21,7 @@ from pkg/balls import checkpoint
 const
   insideoutStackSize* {.intdefine.} = 16_384
   insideoutRenameThread* {.booldefine.} = defined(linux)
+  longtime = 2.0
 
 type
   SpawnError* = object of OSError
@@ -116,7 +117,7 @@ proc kill[A, B](runtime: var RuntimeObj[A, B]): bool {.used.} =
 proc waitForFlags[A, B](runtime: var RuntimeObj[A, B]; wants: uint32) {.raises: [FutexError].} =
   var has = get runtime.flags
   while 0 == (has and wants):
-    let e = checkWait waitMask(runtime.flags, has, wants, 2.0)
+    let e = checkWait waitMask(runtime.flags, has, wants, longtime)
     case e
     of 0, EAGAIN:
       discard
@@ -144,7 +145,9 @@ proc halt*[A, B](runtime: Runtime[A, B]): bool {.discardable.} =
 proc join*[A, B](runtime: sink Runtime[A, B]) {.raises: [FutexError].} =
   ## block until the runtime has exited
   assert not runtime.isNil
-  waitForFlags(runtime[], <<!Running)
+  # XXX
+  if runtime.owners > 1:
+    waitForFlags(runtime[], <<!Running)
 
 proc cancel*[A, B](runtime: Runtime[A, B]): bool {.discardable.} =
   ## cancel a runtime; true if successful.
@@ -226,10 +229,11 @@ proc teardown[A, B](p: pointer) {.noconv.} =
         renderError(e, mErrorMsg)
     #checkpoint "runtime done with mailbox"
   finally:
-    store(runtime[].flags, <<!{Running, Frozen} or <<Halted)
-    # wake all waiters on the flags in order to free any queued
-    # waiters in kernel space
-    checkWake wake(runtime[].flags)
+    discard
+  put(runtime[].flags, <<!{Running, Frozen} or <<Halted)
+  # wake all waiters on the flags in order to free any queued
+  # waiters in kernel space
+  checkWake wake(runtime[].flags)
   #checkpoint "runtime teardown complete"
 
 template mayCancel(r: typed; body: typed): untyped {.used.} =
@@ -322,7 +326,7 @@ proc dispatcher[A, B](runtime: sink Runtime[A, B]): cint =
         inc phase
     of 5:
       try:
-        case checkWait waitMask(runtime[].flags, flags, <<Halted + <<!Frozen, 2.0)
+        case checkWait waitMask(runtime[].flags, flags, <<Halted + <<!Frozen, longtime)
         of EINTR, EAGAIN:
           discard
         of ETIMEDOUT:
@@ -389,7 +393,7 @@ proc boot[A, B](runtime: var RuntimeObj[A, B];
       discard
   while get(runtime.flags) == bootFlags:
     # if the flags changed at all, the thread launch is successful
-    let e = checkWait wait(runtime.flags, bootFlags, 2.0)
+    let e = checkWait wait(runtime.flags, bootFlags, longtime)
     case e
     of 0, EINTR, EAGAIN:
       discard

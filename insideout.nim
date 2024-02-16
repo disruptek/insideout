@@ -117,6 +117,7 @@ macro createRunner*(A: typedesc; B: typedesc): untyped =
           if not box.waitForPoppable():
             debug "shutting down due to unavailable mailbox"
             break
+          debug "wait complete"
         cooperate()
       debug "exiting ", B, " runner"
 

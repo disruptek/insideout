@@ -19,7 +19,7 @@ proc isNil*[T](arc: AtomicRef[T]): bool =
 from pkg/balls import checkpoint
 
 proc debug[T](arc: AtomicRef[T]; s: string; m: string) =
-  when not defined(danger):
+  when false and not defined(danger):
     when not defined(release):
       if not arc.reference.isNil:
         checkpoint s & ":", T, cast[int](arc.reference).toHex.toLowerAscii, m

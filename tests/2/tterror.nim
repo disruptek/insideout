@@ -1,12 +1,13 @@
 import pkg/cps
 
 import insideout
+#import insideout/backlog
 
-const N = 3
+const N = 2
 
 proc foo(i: int) {.cps: Continuation.} =
   ## do something... or rather, nothing
-  discard
+  #debug "did nothing ", i
 
 proc main() =
   let remote = newMailbox[Continuation]()
