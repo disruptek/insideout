@@ -7,7 +7,6 @@ import pkg/cps
 
 import insideout/runtimes
 import insideout/mailboxes
-#import insideout/backlog
 import insideout/pools/saferemove   # a hack around stdlib bug
 
 when false:
@@ -29,7 +28,7 @@ proc isEmpty[A, B](pool: var PoolObj[A, B]): bool =
   withRLock pool.lock:
     result = pool.list.head.isNil
 
-proc isEmpty*[A, B](pool: var Pool): bool =
+proc isEmpty*[A, B](pool: Pool[A, B]): bool =
   assert not pool.isNil
   pool[].isEmpty
 
@@ -43,7 +42,7 @@ proc drain[A, B](pool: var PoolObj[A, B]): Runtime[A, B] =
         #debug "race removing runtime from pool"
         raise Defect.newException "remove race"
 
-proc drain*[A, B](pool: var Pool[A, B]): Runtime[A, B] {.discardable.} =
+proc drain*[A, B](pool: Pool[A, B]): Runtime[A, B] {.discardable.} =
   ## remove a runtime from the pool;
   ## has no effect if the pool is empty
   assert not pool.isNil
@@ -56,7 +55,7 @@ proc join[A, B](pool: var PoolObj[A, B]) =
       join runtime
       debug "joined."
 
-proc join*[A, B](pool: var Pool[A, B]) =
+proc join*[A, B](pool: Pool[A, B]) =
   ## wait for all threads in the pool to complete
   assert not pool.isNil
   join pool[]
@@ -68,7 +67,7 @@ proc halt[A, B](pool: var PoolObj[A, B]) =
       halt item
       debug "halted."
 
-proc halt*[A, B](pool: var Pool[A, B]) =
+proc halt*[A, B](pool: Pool[A, B]) =
   ## command all threads in the pool to halt
   assert not pool.isNil
   halt pool[]
@@ -82,7 +81,7 @@ proc `=destroy`[A, B](pool: var PoolObj[A, B]) =
     discard drain pool
   deinitRLock pool.lock
 
-proc add*[A, B](pool: var Pool[A, B]; runtime: Runtime[A, B]) =
+proc add*[A, B](pool: Pool[A, B]; runtime: Runtime[A, B]) =
   ## add a supplied runtime to the pool
   assert not pool.isNil
   var node: SinglyLinkedNode[Runtime[A, B]]
@@ -93,7 +92,7 @@ proc add*[A, B](pool: var Pool[A, B]; runtime: Runtime[A, B]) =
     pool[].list.prepend node
     debug "added."
 
-proc spawn*[A, B](pool: var Pool[A, B]; factory: Factory[A, B];
+proc spawn*[A, B](pool: Pool[A, B]; factory: Factory[A, B];
                   mailbox: Mailbox[B]): Runtime[A, B] {.discardable.} =
   ## add a new runtime to the pool using the given factory and mailbox
   assert not pool.isNil

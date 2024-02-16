@@ -116,7 +116,7 @@ proc kill[A, B](runtime: var RuntimeObj[A, B]): bool {.used.} =
 proc waitForFlags[A, B](runtime: var RuntimeObj[A, B]; wants: uint32) {.raises: [FutexError].} =
   var has = get runtime.flags
   while 0 == (has and wants):
-    let e = checkWait waitMask(runtime.flags, has, wants, 5.0)
+    let e = checkWait waitMask(runtime.flags, has, wants, 2.0)
     case e
     of 0, EAGAIN:
       discard
@@ -322,7 +322,7 @@ proc dispatcher[A, B](runtime: sink Runtime[A, B]): cint =
         inc phase
     of 5:
       try:
-        case checkWait waitMask(runtime[].flags, flags, <<Halted + <<!Frozen, 5.0)
+        case checkWait waitMask(runtime[].flags, flags, <<Halted + <<!Frozen, 2.0)
         of EINTR, EAGAIN:
           discard
         of ETIMEDOUT:
@@ -389,7 +389,7 @@ proc boot[A, B](runtime: var RuntimeObj[A, B];
       discard
   while get(runtime.flags) == bootFlags:
     # if the flags changed at all, the thread launch is successful
-    let e = checkWait wait(runtime.flags, bootFlags, 5.0)
+    let e = checkWait wait(runtime.flags, bootFlags, 2.0)
     case e
     of 0, EINTR, EAGAIN:
       discard
