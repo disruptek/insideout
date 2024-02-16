@@ -197,6 +197,6 @@ type Grenade = object
 proc `=destroy`(g: var Grenade) =
   deinitCond C
   deinitLock L
-  disablePush queue         # drain the queue and close it
+  closeWrite queue          # drain the queue and close it
   join runtime              # wait for the reader to exit
 var g {.used.}: Grenade     # pull the pin

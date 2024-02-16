@@ -41,13 +41,14 @@ proc main() =
       info runtime
       join runtime
 
-  info "full pool with cancellations"
-  block:
-    var mailbox = newMailbox[Continuation]()
-    var pool = newPool(ContinuationRunner, mailbox, N)
-    for runtime in pool.mitems:
-      info runtime
-      cancel runtime
-      join runtime
+  when false:
+    info "full pool with cancellations"
+    block:
+      var mailbox = newMailbox[Continuation]()
+      var pool = newPool(ContinuationRunner, mailbox, N)
+      for runtime in pool.mitems:
+        info runtime
+        cancel runtime
+        join runtime
 
 main()

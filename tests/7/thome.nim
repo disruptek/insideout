@@ -37,26 +37,19 @@ proc setupOracle(o: Oracle): Oracle {.cpsMagic.} =
   o.x = 1
   result = o
 
-proc cooperate(c: Continuation): Continuation {.cpsMagic.} =
-  c
-
 proc oracle(box: Mailbox[Query]) {.cps: Oracle.} =
   ## the "server"; it does typical continuation stuff
   info "oracle starting"
   setupOracle()
   while true:
     var query: Query
-    reset query
     case box.tryRecv(query)
     of Received:
       rz query
       discard trampoline(move query)
     elif not waitForPoppable(box):
-      info "unavailable"
       break
-    reset query
     cooperate()
-    reset query
   info "oracle terminating"
 
 # define a service using a continuation bootstrap

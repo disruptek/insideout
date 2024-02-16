@@ -37,20 +37,13 @@ proc oracle(box: Mailbox[Query]) {.cps: Oracle.} =
   setupOracle()
   while true:
     var query: Query
-    var r: WardFlag = tryRecv(box, query)
-    case r
-    of Interrupt, Paused, Empty:
-      if not waitForPoppable(box):
-        # the mailbox is unavailable
-        break
-    of Readable:
-      # the mailbox is unreadable
-      break
+    case tryRecv(box, query)
     of Received:
       rz query
       discard trampoline(move query)
-    else:
-      discard
+    elif not waitForPoppable(box):
+      break
+    cooperate()
 
 # define a service using a continuation bootstrap
 const SmartService = whelp oracle
@@ -70,7 +63,7 @@ proc application(): int {.cps: Continuation.} =
 
   # we're still at home
   doAssert home == getThreadId()
-  cancel pool
+  halt pool
 
 proc main =
   let was = application()

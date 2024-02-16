@@ -51,8 +51,6 @@ proc attempt(N: Positive; cores: int = countProcessors()) =
       dec m
     var fillers = newPool(ContinuationRunner, fills, initialSize = cores)
     var drainers = newPool(ContinuationRunner, drains, initialSize = cores)
-    join fillers
-    join drainers
   let clock = (getTime() - now).inMilliseconds.float / 1000.0
   let rate = N.float / clock
   let perCore = rate / cores.float
