@@ -66,7 +66,7 @@ proc reader(filename: string; output: Port) {.cps: Continuation.} =
     debug "-> ", line
     output.send(ip line)     # blocks if the port is full
   close stream
-  disablePush output         # close the port to signify end of data
+  closeWrite output          # close the port to signify end of data
   debug "(stop)"
 
 proc decomposer(input: Port; output: Port) {.cps: Continuation.} =
@@ -74,15 +74,16 @@ proc decomposer(input: Port; output: Port) {.cps: Continuation.} =
   let debug = logAs"decomposer"
   debug "(start)"
   while true:
-    try:
-      var ip = input.recv()     # blocks if the port is empty
+    var ip: IP
+    case input.tryRecv(ip)
+    of Received:
       debug "<- ", ip[]
       for word in ip[].split:
         debug "-> ", word
-        output.send(ip word)    # blocks if the port is full
-    except ValueError:          # input port is closed
-      break
-  disablePush output            # close the port to signify end of data
+        output.send(ip word)         # blocks if the port is full
+    elif not input.waitForPoppable:  # blocks if the port is empty
+      break                          # input port is closed
+  closeWrite output                  # close the port to signify end of data
   debug "(stop)"
 
 proc recomposer(input: Port; output: Port; size: Positive) {.cps: Continuation.} =
@@ -92,23 +93,24 @@ proc recomposer(input: Port; output: Port; size: Positive) {.cps: Continuation.}
   debug "(start)"
   var line: string
   while true:
-    try:
-      var ip = input.recv()     # blocks if the port is empty
+    var ip: IP
+    case input.tryRecv(ip)
+    of Received:
       debug "<- ", ip[]
       if line.len + ip[].len + 1 > size:
         debug "-> ", line
-        output.send(ip line)    # blocks if the port is full
+        output.send(ip line)             # blocks if the port is full
         line = ""
       else:
         if line.len > 0:
           line.add " "
         line.add ip[]
-    except ValueError:          # input port is closed
-      break
+    elif not input.waitForPoppable:      # blocks if the port is empty
+      break                              # input port is closed
   if line != "":
     debug "-> ", line
     output.send(ip line)        # blocks if the port is full
-  disablePush output            # close the port to signify end of data
+  closeWrite output             # close the port to signify end of data
   debug "(stop)"
 
 proc writer(input: Port; filename: string) {.cps: Continuation.} =
@@ -117,14 +119,15 @@ proc writer(input: Port; filename: string) {.cps: Continuation.} =
   debug "(start)"
   let stream = open(filename, fmWrite)
   while true:
-    try:
-      var ip = input.recv()     # blocks if the port is empty
+    var ip: IP
+    case input.tryRecv(ip)
+    of Received:
       debug "<- ", ip[]
       stream.writeLine ip[]
-    except ValueError:          # input port is closed
-      break
+    elif not input.waitForPoppable:  # blocks if the port is empty
+      break                          # input port is closed
   close stream
-  disablePop input              # close the port to signify end of data
+  closeWrite input                   # close the port to signify end of data
   debug "(stop)"
 
 proc network(components: varargs[Continuation]): auto =
