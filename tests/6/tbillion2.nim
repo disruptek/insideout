@@ -55,6 +55,7 @@ proc attempt(N: Positive; cores: int = countProcessors()) =
     notice fmt"{cores:>2d}core = {clock:>10.4f}s, {rate:>10.0f}/sec, {perCore:>10.0f}/core; "
     for queue in queues.mitems:
       closeWrite queue
+    halt pool
 
 proc main =
   var cores = @[countProcessors()]

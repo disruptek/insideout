@@ -21,7 +21,7 @@ from pkg/balls import checkpoint
 const
   insideoutStackSize* {.intdefine.} = 16_384
   insideoutRenameThread* {.booldefine.} = defined(linux)
-  longtime = 2.0
+  longtime = 300.0
 
 type
   SpawnError* = object of OSError
