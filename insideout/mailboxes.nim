@@ -208,7 +208,7 @@ proc waitForPoppable*[T](mail: Mailbox[T]): bool =
   else:
     result = true
 
-proc unboundedPush[T](mail: Mailbox[T]; item: sink T): WardFlag =
+proc unboundedPush[T](mail: Mailbox[T]; item: var T): WardFlag =
   ## push an item without regard to bounds
   push(mail[].queue, move item)
   result = Readable
@@ -223,41 +223,39 @@ proc markFull[T](mail: Mailbox[T]): WardFlag =
   if enable(mail[].state, Full):
     checkWake wakeMask(mail[].state, <<Full)
 
-proc performPush[T](mail: Mailbox[T]; item: sink T): WardFlag =
+proc performPush[T](mail: Mailbox[T]; item: var T): WardFlag =
   ## safely push an item onto the mailbox; returns Readable
   ## if successful, else Full or Interrupt
   when T is void: return Full
-  # XXX: runtime check for boundedness
-  if get(mail[].state) && <<!Bounded:
-    return unboundedPush(mail, item)
-  # otherwise, we're bounded and need to claim a slot
-  let capacity = load(mail[].capacity)
+  # we're bounded and need to claim a slot
+  let capacity = load(mail[].capacity, order = moSequentiallyConsistent)
   var prior = capacity-1  # aim for the last slot
   while true:
     # try to claim the last slot, and assign `prior`
-    atomicThreadFence ATOMIC_SEQ_CST
     if compareExchange(mail[].size, prior, capacity, order = moSequentiallyConsistent):
-      atomicThreadFence ATOMIC_SEQ_CST
       # we won the right to safely push
       result = unboundedPush(mail, item)
       # as expected, we're full
       discard mail.markFull()
-      # XXX: we have some information about the queue: it's full
       break
     elif prior == capacity:
       # surprise, we're full
-      result = Full
+      result = mail.markFull()
       break
     elif compareExchange(mail[].size, prior, prior + 1,
                          order = moSequentiallyConsistent):
-      atomicThreadFence ATOMIC_SEQ_CST
       result = unboundedPush(mail, item)
-      # XXX: we have some information about the queue:
+      # we have some information about the queue:
       # it's readable, not empty, not full
+      if disable(mail[].state, Empty):
+        checkWake wakeMask(mail[].state, <<!Empty)
+      if disable(mail[].state, Full):
+        checkWake wakeMask(mail[].state, <<!Full)
       break
     else:
       # race case: failed to win our slot
       result = Interrupt
+      prior = capacity-1   # reset aim
       when defined(danger):
         # spin to avoid a context switch
         discard
@@ -265,34 +263,36 @@ proc performPush[T](mail: Mailbox[T]; item: sink T): WardFlag =
         # bomb out to try again later
         break
 
-proc tryPush*[T](mail: Mailbox[T]; item: var T): WardFlag =
-  ## fast success/fail push of item
+proc trySend*[T](mail: Mailbox[T]; item: var T): WardFlag =
+  ## non-blocking attempt to push an item into the mailbox
   assert not mail.isNil
+  when T is void: return Full
+  when not defined(danger):
+    if unlikely item.isNil:
+      raise ValueError.newException "attempt to send nil"
   let state = get mail[].state
   if state && <<!Writable:
     Unwritable
-  elif state && <<Full:
-    Full
   elif state && <<Paused:
     Paused
+  elif state && <<Full:
+    Full
   else:
-    mail.performPush(move item)
+    mail.performPush(item)
 
-proc push*[T](mail: Mailbox[T]; item: var T): WardFlag =
+proc push[T](mail: Mailbox[T]; item: sink T): WardFlag =
   ## blocking push of an item
   assert not mail.isNil
   while true:
-    let state = get(mail[].state)
-    result = mail.tryPush(item)
+    let state = get mail[].state
+    result = mail.trySend(item)
     case result
-    of Delivered, Unwritable:
+    of Delivered, Unwritable, Interrupt:
       break
     of Full:
       discard mail.performWait(state, <<!{Writable, Full})
     of Paused:
       discard mail.performWait(state, <<!{Writable, Paused})
-    of Interrupt:
-      break
     else:
       discard
 
@@ -325,46 +325,42 @@ proc performPop[T](mail: Mailbox[T]; item: var T): WardFlag =
   ## safely pop an item from the mailbox; returns Writable
   result = unboundedPop(mail, item)
   if Received == result:
-    # XXX: runtime check for boundedness
-    if <<Bounded in mail[].state:
-      atomicThreadFence ATOMIC_SEQ_CST
-      let count = fetchSub(mail[].size, 1, order = moSequentiallyConsistent)
-      atomicThreadFence ATOMIC_SEQ_CST
-      if 0 == count:
-        if mail[].state.disable Full:
-          checkWake wakeMask(mail[].state, <<!Full)
+    discard fetchSub(mail[].size, 1, order = moSequentiallyConsistent)
+    # optimistically declare the mailbox un-full; a lost
+    # race here simply wakes a waiter harmlessly
+    if disable(mail[].state, Full):
+      checkWake wakeMask(mail[].state, <<!Full)
 
-proc tryPop*[T](mail: Mailbox[T]; item: var T): WardFlag =
-  ## fast success/fail pop of item
+proc tryRecv*[T](mail: Mailbox[T]; item: var T): WardFlag =
+  ## non-blocking attempt to pop an item from the mailbox
   assert not mail.isNil
+  when T is void: return Empty
   let state = get mail[].state
   if state && <<!Readable:
     Unreadable
-  elif state && <<Empty:
-    Empty
   elif state && <<Paused:
     Paused
+  elif state && <<Empty:
+    Empty
   else:
     mail.performPop(item)
 
-proc pop*[T](mail: Mailbox[T]; item: var T): WardFlag =
+proc pop[T](mail: Mailbox[T]; item: var T): WardFlag =
   ## blocking pop of an item
   assert not mail.isNil
   while true:
-    let state = get(mail[].state)
-    result = mail.tryPop(item)
+    let state = get mail[].state
+    result = mail.tryRecv(item)
     case result
-    of Unreadable, Received:
+    of Unreadable, Received, Interrupt:
       break
+    of Paused:
+      discard mail.performWait(state, <<!{Readable, Paused})
     of Empty:
       if mail[].queue.isEmpty:
         discard mail.performWait(state, <<!{Readable, Empty})
       elif disable(mail[].state, Empty):
         checkWake wakeMask(mail[].state, <<!Empty)
-    of Paused:
-      discard mail.performWait(state, <<!{Readable, Paused})
-    of Interrupt:
-      break
     else:
       discard
 
@@ -417,6 +413,7 @@ proc waitForFull*[T](mail: Mailbox[T]) =
 proc recv*[T](mail: Mailbox[T]): T =
   ## blocking pop of an item from the mailbox
   assert not mail.isNil
+  when T is void: return Empty
   while true:
     case pop(mail, result)
     of Received:
@@ -428,23 +425,10 @@ proc recv*[T](mail: Mailbox[T]): T =
     else:
       discard
 
-proc tryRecv*[T](mail: Mailbox[T]; message: var T): WardFlag =
-  ## non-blocking attempt to pop an item from the mailbox;
-  ## true if it worked
-  assert not mail.isNil
-  let state = mail.state
-  if state && <<!Readable:
-    Readable
-  elif state && <<Paused:
-    Paused
-  elif state && <<Empty:
-    Empty
-  else:
-    tryPop(mail, message)
-
 proc send*[T](mail: Mailbox[T]; item: sink T) =
   ## blocking push of an item into the mailbox
   assert not mail.isNil
+  when T is void: return Full
   when not defined(danger):
     if unlikely item.isNil:
       raise ValueError.newException "nil message"
@@ -458,23 +442,6 @@ proc send*[T](mail: Mailbox[T]; item: sink T) =
       raise IOError.newException "interrupted"
     else:
       discard
-
-proc trySend*[T](mail: Mailbox[T]; item: sink T): WardFlag =
-  ## non-blocking attempt to push an item into the mailbox;
-  ## true if it worked
-  assert not mail.isNil
-  when not defined(danger):
-    if unlikely item.isNil:
-      raise ValueError.newException "attempt to send nil"
-  let state = mail.state
-  if state && <<!Writable:
-    Writable
-  elif state && <<Paused:
-    Paused
-  elif state && <<Full:
-    Full
-  else:
-    tryPush(mail, item)
 
 proc state*[T](mail: Mailbox[T]): FlagT {.deprecated.} =
   assert not mail.isNil

@@ -24,7 +24,7 @@ import insideout/mailboxes
 import insideout/runtimes
 import insideout/valgrind
 
-when false:
+when true:
   import insideout/backlog
   export backlog
 else:

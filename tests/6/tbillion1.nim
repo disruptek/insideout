@@ -37,8 +37,6 @@ proc attempt(N: Positive; cores: int = countProcessors()) =
         whelp queue.filler(N div M)
       dec m
     var fillers = newPool(ContinuationRunner, fills, initialSize = M)
-    for filler in fillers.mitems:
-      join filler
   pause queue
   info "booting ", cores, " cores"
   var now: Time
@@ -49,7 +47,9 @@ proc attempt(N: Positive; cores: int = countProcessors()) =
     resume queue
     waitForEmpty queue
     clock = (getTime() - now).inMilliseconds.float / 1000.0
-    cancel pool
+    halt pool
+    closeWrite queue
+    closeRead queue
   let rate = N.float / clock
   let perCore = rate / cores.float
   info fmt"{cores:>2d}core = {clock:>10.4f}s, {rate:>10.0f}/sec, {perCore:>10.0f}/core; "

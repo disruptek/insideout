@@ -42,9 +42,7 @@ proc sysFutex(uaddr: pointer; futex_op: cint; val: uint32;
               timeout: ptr TimeSpec = nil; uaddr2: ptr uint32 = nil;
               val3: uint32 = 0): cint =
   assert val != 0
-  atomicThreadFence ATOMIC_SEQ_CST
   result = syscall(NR_Futex, uaddr, futex_op, val, timeout, uaddr2, val3)
-  atomicThreadFence ATOMIC_SEQ_CST
 
 proc getTimeSpec*(clock: ClockId): TimeSpec =
   if 0 != clock_gettime(clock, result):

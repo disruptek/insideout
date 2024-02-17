@@ -38,8 +38,6 @@ proc attempt(N: Positive; cores: int = countProcessors()) =
       queues.add q
       dec m
     var fillers = newPool(ContinuationRunner, fills, initialSize = cores)
-    for filler in fillers.mitems:
-      join filler
   block:
     var pool = newPool(ContinuationWaiter)
     for queue in queues.mitems:
@@ -55,9 +53,8 @@ proc attempt(N: Positive; cores: int = countProcessors()) =
     let rate = N.float / clock
     let perCore = rate / cores.float
     notice fmt"{cores:>2d}core = {clock:>10.4f}s, {rate:>10.0f}/sec, {perCore:>10.0f}/core; "
-    stop pool
-    cancel pool
-    join pool
+    for queue in queues.mitems:
+      closeWrite queue
 
 proc main =
   var cores = @[countProcessors()]

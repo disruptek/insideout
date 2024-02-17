@@ -79,10 +79,8 @@ proc `!&&`*[T: FlagsInts](flags: T; mask: T): bool =
 
 proc put*[T: FlagsInts](flags: var Atomic[T]; value: T) =
   store(flags, value, order = moSequentiallyConsistent)
-  atomicThreadFence ATOMIC_SEQ_CST
 
 proc get*[T: FlagsInts](flags: var Atomic[T]): T =
-  atomicThreadFence ATOMIC_SEQ_CST
   load(flags, order = moSequentiallyConsistent)
 
 proc contains*[T: FlagsInts](flags: var Atomic[T]; mask: T): bool =
@@ -110,14 +108,9 @@ proc swap*[T: FlagsInts](flags: var AtomicFlags; past, future: T): bool {.discar
 
   var value: T = 0  # NOTE: 0 is not a valid value for flags
   while true:
-    #checkpoint getThreadId(), "past=", past, "future=", future, "value=", value, "prior=", prior, "attempt"
-    atomicThreadFence ATOMIC_SEQ_CST
     if compareExchange(flags, prior, value, order = moSequentiallyConsistent):
-      atomicThreadFence ATOMIC_SEQ_CST
-      #checkpoint getThreadId(), cast[uint](addr flags), "past=", past, "future=", future, "value=", value, "prior=", prior, "exchanged"
       return true
     if 0 == (prior and past) and future == (prior and future):
-      #checkpoint getThreadId(), cast[uint](addr flags), "past=", past, "future=", future, "value=", value, "prior=", prior, "unneeded"
       break
     else:
       value = (prior xor past) or future
