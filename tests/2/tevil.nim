@@ -13,7 +13,7 @@ let N =
   if getEnv"GITHUB_ACTIONS" == "true" or not defined(danger) or isGrinding():
     10_000
   else:
-    1_00_000
+    100_000
 
 proc cooperate(c: Continuation): Continuation {.cpsMagic.} = c
 

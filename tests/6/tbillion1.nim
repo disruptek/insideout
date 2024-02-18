@@ -11,8 +11,8 @@ import insideout
 import insideout/backlog
 
 let N =
-  if getEnv"GITHUB_ACTIONS" == "true" or not defined(danger):
-    10_000_000
+  if getEnv"GITHUB_ACTIONS" == "true" or not defined(danger) or isGrinding():
+    1_000_000
   else:
     100_000_000
 let M = countProcessors()

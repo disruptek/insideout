@@ -16,15 +16,13 @@ import insideout/mailboxes
 import insideout/threads
 #import insideout/eventqueue
 
-from pkg/balls import checkpoint
-
 const
   insideoutStackSize* {.intdefine.} = 16_384
   insideoutRenameThread* {.booldefine.} = defined(linux)
-  longtime = 5.0
 
 type
   SpawnError* = object of OSError
+  RuntimeError* = object of OSError
   Dispatcher* = proc(p: pointer): pointer {.noconv.}
   Factory*[A, B] = proc(mailbox: Mailbox[B]) {.cps: A.}
 
@@ -114,27 +112,20 @@ proc kill[A, B](runtime: var RuntimeObj[A, B]): bool {.used.} =
   ## kill a runtime; false if the runtime is not running
   signal(runtime, 9)
 
-proc waitForFlags[A, B](runtime: var RuntimeObj[A, B]; wants: uint32) {.raises: [FutexError].} =
-  var has = get runtime.flags
-  while 0 == (has and wants):
-    let e = checkWait waitMask(runtime.flags, has, wants, longtime)
+proc waitForFlags[A, B](runtime: var RuntimeObj[A, B]; wants: uint32): bool {.raises: [FutexError].} =
+  while true:
+    var has = get runtime.flags
+    result = 0 != (has and wants)
+    if result:
+      break
+    let e = checkWait waitMask(runtime.flags, has, wants, 10.0)
     case e
     of 0, EAGAIN:
       discard
     of ETIMEDOUT:
-      when not defined(danger):
-        try:
-          checkpoint getThreadId(), cast[int](addr runtime.flags).toHex.toLowerAscii, "has:", has, "wants:", wants, "load:", get(runtime.flags), "timeout!"
-        except IOError:
-          discard
-        # one final re-check
-        has = get runtime.flags
-        if 0 != (has and wants):
-          break
-      raise FutexError.newException "timeout waiting for runtime flags"
+      break
     else:
       raise Defect.newException "unexpected futex error: " & $e
-    has = get runtime.flags
 
 proc halt*[A, B](runtime: Runtime[A, B]): bool {.discardable.} =
   ## ask the runtime to exit; true if the runtime wasn't already halted
@@ -142,12 +133,12 @@ proc halt*[A, B](runtime: Runtime[A, B]): bool {.discardable.} =
   result = runtime[].flags.enable Halted
   discard signal(runtime[], SIGINT)
 
-proc join*[A, B](runtime: sink Runtime[A, B]) {.raises: [FutexError].} =
+proc join*[A, B](runtime: sink Runtime[A, B]) {.raises: [FutexError, RuntimeError].} =
   ## block until the runtime has exited
   assert not runtime.isNil
-  # XXX
   if runtime.owners > 1:
-    waitForFlags(runtime[], <<!Running)
+    if not waitForFlags(runtime[], <<!Running):
+      raise RuntimeError.newException "runtime failed to exit"
 
 proc cancel*[A, B](runtime: Runtime[A, B]): bool {.discardable.} =
   ## cancel a runtime; true if successful.
@@ -156,7 +147,6 @@ proc cancel*[A, B](runtime: Runtime[A, B]): bool {.discardable.} =
   cancel runtime[]
 
 proc `=destroy`[A, B](runtime: var RuntimeObj[A, B]) =
-  #checkpoint "=destroy runtime"
   # reset the flags so that the subsequent wake will
   # not be ignored for any reason
   put(runtime.flags, deadFlags)
@@ -164,18 +154,7 @@ proc `=destroy`[A, B](runtime: var RuntimeObj[A, B]) =
   # queued waiters in kernel space
   checkWake wake(runtime.flags)
   for key, value in runtime.fieldPairs:
-    when key == "flags":
-      try:
-        #checkpoint "=destroy runtime flags at", cast[int](addr runtime.flags).toHex.toLowerAscii
-        discard
-      except IOError:
-        discard
-    else:
-      try:
-        #checkpoint "=destroy runtime field", key
-        discard
-      except IOError:
-        discard
+    when key != "flags":
       reset value
 
 proc renderError(e: ref Exception; s = "crash;"): string =
@@ -220,21 +199,17 @@ proc teardown[A, B](p: pointer) {.noconv.} =
       const cErrorMsg = "destroying " & $A & " continuation;"
       stdmsg().writeLine:
         renderError(e, cErrorMsg)
-    #checkpoint "runtime done with continuation"
     try:
       reset runtime[].mailbox
     except CatchableError as e:
       const mErrorMsg = "discarding " & $B & " mailbox;"
       stdmsg().writeLine:
         renderError(e, mErrorMsg)
-    #checkpoint "runtime done with mailbox"
   finally:
-    discard
-  put(runtime[].flags, <<!{Running, Frozen} or <<Halted)
-  # wake all waiters on the flags in order to free any queued
-  # waiters in kernel space
-  checkWake wake(runtime[].flags)
-  #checkpoint "runtime teardown complete"
+    put(runtime[].flags, <<!{Running, Frozen} or <<Halted)
+    # wake all waiters on the flags in order to free any queued
+    # waiters in kernel space
+    checkWake wake(runtime[].flags)
 
 template mayCancel(r: typed; body: typed): untyped {.used.} =
   var prior: cint
@@ -326,7 +301,7 @@ proc dispatcher[A, B](runtime: sink Runtime[A, B]): cint =
         inc phase
     of 5:
       try:
-        case checkWait waitMask(runtime[].flags, flags, <<Halted + <<!Frozen, longtime)
+        case checkWait waitMask(runtime[].flags, flags, <<Halted + <<!Frozen)
         of EINTR, EAGAIN:
           discard
         of ETIMEDOUT:
@@ -385,15 +360,9 @@ proc boot[A, B](runtime: var RuntimeObj[A, B];
   spawnCheck pthread_create(addr runtime.handle, addr attr, thread[A, B],
                             cast[pointer](addr runtime))
   spawnCheck pthread_attr_destroy(addr attr)
-  when false:
-    try:
-      checkpoint A, "/", B, "runtime boot with flags at ", cast[int](addr runtime.flags).toHex.toLowerAscii
-      discard
-    except IOError:
-      discard
   while get(runtime.flags) == bootFlags:
     # if the flags changed at all, the thread launch is successful
-    let e = checkWait wait(runtime.flags, bootFlags, longtime)
+    let e = checkWait wait(runtime.flags, bootFlags)
     case e
     of 0, EINTR, EAGAIN:
       discard

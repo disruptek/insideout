@@ -6,7 +6,7 @@ import pkg/cps
 
 import insideout/runtimes
 import insideout/mailboxes
-#import insideout/backlog
+import insideout/backlog
 import insideout/valgrind
 
 let N =
@@ -24,14 +24,11 @@ proc cooperate(c: Continuation): Continuation {.cpsMagic.} = c
 proc unblocking(jobs: Mailbox[Job]) {.cps: Server.} =
   ## non-blocking receive
   #debug "service began"
-  while true:
-    var job: Job
-    case jobs.tryRecv(job)
-    of Received:
-      cooperate()
-    elif not jobs.waitForPoppable():
-      #debug "service wait failed"
+  var job: Job
+  while Received != jobs.tryRecv(job):
+    if not jobs.waitForPoppable:
       break
+    cooperate()
   #debug "service ended"
 
 proc blocking(jobs: Mailbox[Job]) {.cps: Server.} =
@@ -50,9 +47,9 @@ proc main() =
 
   block:
     ## non-blocking mailbox sniffer
-    #notice "runtime"
+    notice "runtime"
     let jobs = newMailbox[Job]()
-    #info "[runtime] spawn"
+    info "[runtime] spawn"
     var runtime = Unblocking.spawn(jobs)
     var other = runtime
     doAssert other.state == Running
@@ -61,14 +58,14 @@ proc main() =
     #pinToCpu(other, 0)
     doAssert runtime.mailbox == jobs
     var job = Job()
-    #info "[runtime] send"
+    info "[runtime] send"
     while Delivered != jobs.trySend(job):
       discard
-    #info "[runtime] close"
+    info "[runtime] close"
     jobs.closeWrite()
-    #info "[runtime] join"
+    info "[runtime] join"
     join runtime
-    #info "[runtime] done"
+    info "[runtime] done"
 
   when false: #block:
     ## blocking waitor cancellation
