@@ -280,7 +280,7 @@ proc trySend*[T](mail: Mailbox[T]; item: var T): WardFlag =
   else:
     mail.performPush(item)
 
-proc push[T](mail: Mailbox[T]; item: sink T): WardFlag =
+proc push[T](mail: Mailbox[T]; item: var T): WardFlag =
   ## blocking push of an item
   assert not mail.isNil
   while true:
@@ -429,9 +429,7 @@ proc send*[T](mail: Mailbox[T]; item: sink T) =
   ## blocking push of an item into the mailbox
   assert not mail.isNil
   when T is void: return Full
-  when not defined(danger):
-    if unlikely item.isNil:
-      raise ValueError.newException "nil message"
+  assert not item.isNil
   while true:
     case push(mail, item)
     of Delivered:
