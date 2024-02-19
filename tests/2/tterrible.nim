@@ -1,20 +1,24 @@
+## send messages to a queue limited in size by the number of threads
+## consuming from it and relaying messages back to the main thread.
+## confirm that we receive the right number of replies from workers.
+
 import std/os
+import std/osproc
 
 import pkg/cps
 
 import insideout
 #import insideout/backlog
 
-const M = 2
+let M = countProcessors()
 let N =
   if getEnv"GITHUB_ACTIONS" == "true" or not defined(danger) or isGrinding():
-    1_000
+    10_000
   else:
     100_000
 
-
 proc foo(a, b: Mailbox[ref int]; i: int) {.cps: Continuation.} =
-  echo "hello ", i
+  #echo "hello ", i
   while true:
     var i: ref int
     var r = a.tryRecv(i)
@@ -22,14 +26,14 @@ proc foo(a, b: Mailbox[ref int]; i: int) {.cps: Continuation.} =
     of Received:
       #echo "foo ", i[], " a.len: ", a.len, " b.len: ", b.len
       while Delivered != b.trySend(i):
-        echo "send fail ", i[]
+        #echo "send fail ", i[]
         discard
     else:
       #echo "a: ", r, " a.len: ", a.len
       if not a.waitForPoppable():
-        echo "failed out of foos"
+        #echo "failed out of foos"
         break
-  echo "goodbye ", i
+  #echo "goodbye ", i
 
 proc main(n: int) =
   # where to do work
@@ -44,7 +48,7 @@ proc main(n: int) =
     var c = whelp foo(a, b, i)
     while Delivered != remote.trySend(c):
       discard
-  echo "done continuations"
+  #echo "done continuations"
   closeWrite remote
   # send the messages
   for i in 0..N:
@@ -55,7 +59,7 @@ proc main(n: int) =
     while Delivered != a.trySend(x):
       discard
   # there will be no more messages
-  echo "done sends"
+  #echo "done sends"
   closeWrite a
   var z = N
   while z > 0:
@@ -69,7 +73,8 @@ proc main(n: int) =
       echo "failed out of receives"
       break
     dec z
-  echo "done ", N-z, " receives"
+  echo "done ", N-z, " receives across ", n, " threads"
+  closeWrite b
   # confirm that we received all the messages
   if z != 0:
     echo "missing ", z, " messages"
@@ -78,16 +83,18 @@ proc main(n: int) =
   var x: ref int
   var r = b.tryRecv(x)
   if r != Empty:
-    echo "receipt ", r
-    quit 1
-  echo "close receive"
+    echo "receipt ", r, " of ", x[]
+    var e = if x.isNil: 0 else: 1
+    while not x.isNil and b.tryRecv(x) == Received:
+      echo "another extra ", x[]
+      inc e
+    quit e
+  #echo "close receive"
   closeRead b
-  echo "halt pool"
+  #echo "halt pool"
   halt pool
-  echo "cancel pool"
+  #echo "cancel pool"
   cancel pool
-  echo "join pool"
-  join pool
 
 for n in 1..M:
   main(n)
