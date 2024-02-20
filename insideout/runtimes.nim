@@ -118,15 +118,12 @@ proc waitForFlags[A, B](runtime: var RuntimeObj[A, B]; wants: uint32): bool {.ra
     result = 0 != (has and wants)
     if result:
       break
-    when insideoutSafeMode:
-      let e = checkWait waitMask(runtime.flags, has, wants)
-    else:
-      let e = checkWait waitMask(runtime.flags, has, wants, 5.0)
+    let e = checkWait waitMask(runtime.flags, has, wants)
     case e
-    of 0, EAGAIN:
+    of 0, EINTR, EAGAIN:
       discard
     of ETIMEDOUT:
-      break
+      raise FutexError.newException "timeout booting thread"
     else:
       raise Defect.newException "unexpected futex error: " & $e
 
@@ -134,7 +131,8 @@ proc halt*[A, B](runtime: Runtime[A, B]): bool {.discardable.} =
   ## ask the runtime to exit; true if the runtime wasn't already halted
   assert not runtime.isNil
   result = runtime[].flags.enable Halted
-  discard signal(runtime[], SIGINT)
+  if result:
+    checkWake wakeMask(runtime[].flags, <<Halted)
 
 proc join*[A, B](runtime: sink Runtime[A, B]) {.raises: [FutexError, RuntimeError].} =
   ## block until the runtime has exited
@@ -303,21 +301,21 @@ proc dispatcher[A, B](runtime: sink Runtime[A, B]): cint =
       else:
         inc phase
     of 5:
-      try:
-        case checkWait waitMask(runtime[].flags, flags, <<Halted + <<!Frozen)
-        of EINTR, EAGAIN:
-          discard
-        of ETIMEDOUT:
-          raise FutexError.newException "timeout waiting to unfreeze"
-        else:
-          let flags = get runtime[].flags
-          if flags && <<Halted:      # halted while frozen
-            phase = high int
-          elif flags && <<Frozen:    # spurious wakeup
-            phase = 5                # loop and don't rename thread
-          else:                      # unfrozen
-            phase = 0
-      except FutexError:
+      case checkWait waitMask(runtime[].flags, flags, <<Halted + <<!Frozen)
+      of EINTR:
+        discard
+      of 0, EAGAIN:
+        let flags = get runtime[].flags
+        if flags && <<Halted:      # halted while frozen
+          phase = high int
+        elif flags && <<Frozen:    # spurious wakeup
+          phase = 5                # loop and don't rename thread
+        else:                      # unfrozen
+          phase = 0
+      of ETIMEDOUT:
+        runtime[].error = FutexError.newException "timeout waiting to unfreeze"
+        nextIf 1
+      else:
         runtime[].error = FutexError.newException $strerror(errno)
         nextIf errno
     else:
@@ -370,9 +368,9 @@ proc boot[A, B](runtime: var RuntimeObj[A, B];
     of 0, EINTR, EAGAIN:
       discard
     of ETIMEDOUT:
-      raise Defect.newException "timeout in boot"
+      raise FutexError.newException "timeout booting thread"
     else:
-      raise Defect.newException "new thread failed to start"
+      raise Defect.newException "unexpected futex error: " & $e
 
 proc spawn[A, void](runtime: var RuntimeObj[A, void]; continuation: sink A) =
   ## add compute to mailbox
