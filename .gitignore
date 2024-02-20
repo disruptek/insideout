@@ -1,3 +1,8 @@
 nim.cfg
 bin
 deps
+.tool-versions
+examples/data/output.txt
+backlog.txt
+profile.coz
+nimblemeta.json

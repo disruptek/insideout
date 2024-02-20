@@ -9,7 +9,6 @@ on:
     branches:
       - '*'
 
-
 jobs:
   changes:
     # Disable the filter on scheduled runs because we don't want to skip those
@@ -52,8 +51,13 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest]
-        nim: [devel]
-    name: '${{ matrix.os }} (${{ matrix.nim }})'
+        compiler:
+          #- name: nim
+          #  version: devel
+          - name: nimskull
+            version: "*"
+
+    name: '${{ matrix.os }} (${{ matrix.compiler.name }} ${{ matrix.compiler.version }})'
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
@@ -61,25 +65,75 @@ jobs:
         with:
           path: project
 
-      - name: Setup Nim
+      - name: Nim
+        if: matrix.compiler.name == 'nim'
         uses: alaviss/setup-nim@0.1.1
         with:
           path: nim
-          version: ${{ matrix.nim }}
+          version: ${{ matrix.compiler.version }}
 
-      - name: Run tests
+      - name: Nimskull
+        id: nimskull
+        if: matrix.compiler.name == 'nimskull'
+        uses: alaviss/setup-nimskull@f6e8ade8ac51191024616216e5da0ee968d9da48
+        with:
+          nimskull-version: ${{ matrix.compiler.version }}
+
+      - name: Fetch Nimble
+        if: matrix.compiler.name == 'nimskull'
+        uses: actions/checkout@v4
+        with:
+          path: nimble
+          repository: alaviss/nimble
+          ref: nimskull
+
+      - name: Build Nimble
+        if: matrix.compiler.name == 'nimskull'
         shell: bash
         run: |
-          sudo apt-get update
-          sudo apt install --fix-missing valgrind
+          cd nimble
+          nim c -d:release -o:nimble src/nimble.nim
+          cp nimble "$NIMSKULL_BIN/nimble"
+          # Add nimble binary folder to PATH too
+          echo "$HOME/.nimble/bin" >> $GITHUB_PATH
+        env:
+          NIMSKULL_BIN: ${{ steps.nimskull.outputs.binPath }}
+
+#     - name: Valgrind
+#       shell: bash
+#       run: |
+#         sudo apt-get update
+#         sudo apt install --fix-missing valgrind
+
+      - name: Dependencies
+        shell: bash
+        run: |
           cd project
           nimble --accept develop
           nimble --accept install "https://github.com/disruptek/balls"
-          balls --path="." \
-                --backend:c --backend:cpp \
+        env:
+          NIM: ${{ matrix.compiler.name }}
+
+      - name: Examples
+        shell: bash
+        run: |
+          cd project
+          cd examples
+          balls '***' --path=".." \
+                --backend:c --panics:on \
                 --mm:arc --define:useMalloc \
-                --define:debug --define:release --define:danger \
-                --define:insideoutValgrind=on --define:insideoutSleepyMonkey=100
+                --define:debug --define:release --define:danger
+        env:
+          NIM: ${{ matrix.compiler.name }}
+
+      - name: Tests
+        shell: bash
+        run: |
+          cd project
+          balls --path="." \
+                --backend:c --panics:on \
+                --mm:arc --define:useMalloc \
+                --define:debug --define:release --define:danger
 
 #      - name: Build docs
 #        shell: bash

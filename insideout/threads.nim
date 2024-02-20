@@ -1,17 +1,28 @@
 import std/posix
 export PThread, PThreadAttr
 
-const
-  insideoutNimThreads* {.booldefine.} = false
-
 when (NimMajor, NimMinor) > (1, 6):
   from std/private/threadtypes import pthreadh, SysThread, CpuSet, cpusetZero, cpusetIncl, setAffinity
   export SysThread
+elif defined(isNimSkull):
+  const
+    pthreadh = "#define _GNU_SOURCE\n#include <pthread.h>"
+    schedh = "#define _GNU_SOURCE\n#include <sched.h>"
+  type CpuSet* {.importc: "cpu_set_t", header: schedh.} = object
+    when defined(linux) and defined(amd64):
+      abi: array[1024 div (8 * sizeof(culong)), culong]
+  proc cpusetZero*(s: var CpuSet)
+                  {.importc: "CPU_ZERO", header: schedh.}
+  proc cpusetIncl*(cpu: cint; s: var CpuSet)
+                  {.importc: "CPU_SET", header: schedh.}
+  proc setAffinity*(thread: SysThread; setsize: csize_t; s: var CpuSet)
+                   {.importc: "pthread_setaffinity_np", header: pthreadh.}
 else:
   #type
   #  PThreadAttr* {.byref, importc: "pthread_attr_t", header: "<sys/types.h>".} = object
   const
     pthreadh* = "#define _GNU_SOURCE\n#include <pthread.h>"
+    schedh = "#define _GNU_SOURCE\n#include <sched.h>"
 
 type
   ThreadLike = PThread | SysThread
@@ -56,7 +67,7 @@ else:
   proc pthread_setname_np*(name: cstring): cint =
     pthread_setname_np(pthread_self(), name)
 
-proc pinToCpu*(thread: ThreadLike; cpu: Natural) {.inline.} =
+proc pinToCpu*(thread: ThreadLike; cpu: Natural) =
   when not defined(macosx):
     var s {.noinit.}: CpuSet
     cpusetZero(s)

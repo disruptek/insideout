@@ -1,6 +1,8 @@
+import std/compilesettings
 import std/genasts
 import std/macros
 import std/options
+import std/strutils
 
 const
   insideoutValgrind* {.booldefine.} = false
@@ -19,17 +21,17 @@ macro whenValgrind(tmplate: typed): untyped =
         logic
   result = tmplate
 
-template happensBefore*(x: typed): untyped {.whenValgrind.} =
+template happensBefore*(x: pointer): untyped {.whenValgrind.} =
   block:
     let y {.exportc, inject.} = x
     {.emit: "ANNOTATE_HAPPENS_BEFORE(y);".}
 
-template happensAfter*(x: typed): untyped {.whenValgrind.} =
+template happensAfter*(x: pointer): untyped {.whenValgrind.} =
   block:
     let y {.exportc, inject.} = x
     {.emit: "ANNOTATE_HAPPENS_AFTER(y);".}
 
-template happensBeforeForgetAll*(x: typed): untyped {.whenValgrind.} =
+template happensBeforeForgetAll*(x: pointer): untyped {.whenValgrind.} =
   block:
     let y {.exportc, inject.} = x
     {.emit: "ANNOTATE_HAPPENS_BEFORE_FORGET_ALL(y);".}
@@ -42,3 +44,12 @@ proc isUnderValgrind*(): bool =
       {.emit: "result = RUNNING_ON_VALGRIND;".}
     runningOnValgrind = some result
   get runningOnValgrind
+
+const runningSanitizer =
+  some:
+    "-fsanitize=" in querySetting(SingleValueSetting.commandLine)
+proc isSanitizing*(): bool =
+  get runningSanitizer
+
+template isGrinding*(): bool =
+  isUnderValgrind() or isSanitizing()

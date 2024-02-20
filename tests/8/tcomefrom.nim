@@ -17,17 +17,14 @@ proc value(c: Query): int {.cpsVoodoo.} = c.y
 proc ask(mailbox: Mailbox[Query]; x: int): int {.cps: Query.} =
   ## the "client"
   setupQueryWith x
-  #echo "asking " & $x & " in " & $getThreadId()
-  goto mailbox
-  #echo "recover " & $x & " in " & $getThreadId()
+  debugEcho "asking " & $x & " in " & $getThreadId()
+  comeFrom mailbox
   result = value()
+  debugEcho "recovered " & $result & " in " & $getThreadId()
 
 proc rz(a: Oracle; b: Query): Oracle {.cpsMagic.} =
   ## fraternization
-  if a.x >= int.high div 2:
-    a.x = 1
-  else:
-    a.x *= 2
+  a.x *= 2
   b.y += a.x
   result = a
 
@@ -35,49 +32,43 @@ proc setupOracle(o: Oracle): Oracle {.cpsMagic.} =
   o.x = 1
   result = o
 
-proc oracle(mailbox: Mailbox[Query]) {.cps: Oracle.} =
+proc oracle(box: Mailbox[Query]) {.cps: Oracle.} =
   ## the "server"; it does typical continuation stuff
   setupOracle()
   while true:
-    var query = recv mailbox
-    if dismissed query:
-      break
-    else:
+    var query: Query
+    case tryRecv(box, query)
+    of Received:
       rz query
       discard trampoline(move query)
-      doAssert query.isNil
+    elif not waitForPoppable(box):
+      break
+    cooperate()
 
 # define a service using a continuation bootstrap
 const SmartService = whelp oracle
 
-proc application(home: Mailbox[Continuation]) {.cps: Continuation.} =
+proc application(): int {.cps: Continuation.} =
   # create a child service
   var mail = newMailbox[Query]()
-  var pool {.used.} = newPool[Oracle, Query](SmartService, mail)
+  var pool = newPool[Oracle, Query](SmartService, mail, 1)
+  let home = getThreadId()
 
   # submit some questions, etc.
-  var i = 100
+  var i = 10
   while i > 0:
-    #echo "result of ", i, " is ", ask(address, i)
-    discard ask(mail, i)
-    goto home
+    result = ask(mail, i)
     dec i
+    doAssert home == getThreadId()
 
-  # go home and drain the pool
-  goto home
-  home.send nil.Continuation
+  # we're still at home
+  doAssert home == getThreadId()
+  halt pool
 
 proc main =
-  echo "\n\n\n"
-  block:
-    var home = newMailbox[Continuation]()
-    var c = Continuation: whelp application(home)
-    while not c.dismissed:
-      discard trampoline(move c)
-      doAssert c.isNil
-      c = recv home
-    echo "application complete"
-  echo "program exit"
+  let was = application()
+  doAssert was == 1025, "result was " & $was & " and not 1025"
+  echo "application complete"
 
 when isMainModule:
   main()

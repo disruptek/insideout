@@ -1,14 +1,9 @@
-when defined(isNimSkull):
-  discard
-else:
+when not defined(isNimSkull):
   when (NimMajor, NimMinor) < (1, 7):
     {.error: "insideout requires nim >= 1.7".}
 
-when not defined(gcArc):
-  when defined gcOrc:
-    {.warning: "insideout does not support mm:orc".}
-  else:
-    {.error: "insideout requires mm:arc".}
+when not defined(gcArc) and not defined(gcOrc):
+  {.error: "insideout requires arc or orc memory management".}
 
 when not defined(useMalloc):
   {.error: "insideout requires define:useMalloc".}
@@ -29,18 +24,31 @@ import insideout/mailboxes
 import insideout/runtimes
 import insideout/valgrind
 
-export pools
+when false:
+  import insideout/backlog
+  export backlog
+elif defined(danger):
+  template debug(args: varargs[untyped]) = discard
+else:
+  import std/strutils
+  template debug(args: varargs[string, `$`]) =
+    stdmsg().writeLine $getThreadId() & " " & args.join("")
+
 export mailboxes
 export runtimes
 export valgrind
+export pools
 
 proc goto*[T](continuation: var T; where: Mailbox[T]): T {.cpsMagic.} =
   ## move the current continuation to another compute domain
   # we want to be sure that a future destroy finds nothing,
   # so we move the continuation and then send /that/ ref.
-  var message = move continuation
-  where.send message
+  where.send(move continuation)
   result = nil.T
+
+proc cooperate*(a: sink Continuation): Continuation {.cpsMagic.} =
+  ## yield to the dispatcher
+  a
 
 macro createWaitron*(A: typedesc; B: typedesc): untyped =
   ## The compiler really hates when you do this one thing;
@@ -51,17 +59,77 @@ macro createWaitron*(A: typedesc; B: typedesc): untyped =
   name.copyLineInfo(A)
   genAstOpt({}, name, A, B):
     proc name(box: Mailbox[B]) {.cps: A.} =
-      ## generic blocking mailbox consumer
+      ## continuously consume and run `B` continuations
+      mixin cooperate
+      debug "starting waitron"
       while true:
-        var mail = recv box
-        if dismissed mail:
+        var c: Continuation
+        var r = tryRecv(box, c.B)
+        case r
+        of Unreadable:
+          debug "shutting down due to unreadable mailbox"
           break
+        of Interrupt:
+          debug "caught interrupt"
+        of Received:
+          while c.running:
+            debug "will bounce continuation"
+            c = bounce c
+            cooperate()
+          # reap the local in the cps environment
+          reset c
         else:
-          discard trampoline(move mail)
+          debug r, "; waiting for poppable"
+          if not box.waitForPoppable():
+            debug "shutting down due to unavailable mailbox"
+            break
+        cooperate()
+      debug "exiting waitron"
+
+    whelp name
+
+macro createRunner*(A: typedesc; B: typedesc): untyped =
+  ## Create a dispatcher, itself an `A` continuation,
+  ## which runs a single `B` continuation and terminates.
+  let name =
+    nskProc.genSym:
+      "runner " & repr(A) & " To " & repr(B)
+  name.copyLineInfo(A)
+  genAstOpt({}, name, A, B):
+    proc name(box: Mailbox[B]) {.cps: A.} =
+      ## run a single `B` continuation
+      mixin cooperate
+      debug "starting ", B, " runner"
+      while true:
+        var c: Continuation
+        var r = box.tryRecv(B c)
+        case r
+        of Received:
+          while c.running:
+            debug "will bounce continuation"
+            c = bounce c
+            cooperate()
+          reset c
+          break
+        of Unreadable:
+          debug "shutting down due to unreadable mailbox"
+          break
+        of Interrupt:
+          debug "caught interrupt"
+        else:
+          debug r, "; waiting for poppable"
+          if not box.waitForPoppable():
+            debug "shutting down due to unavailable mailbox"
+            break
+          debug "wait complete"
+        cooperate()
+      debug "exiting ", B, " runner"
+
     whelp name
 
 const
   ContinuationWaiter* = createWaitron(Continuation, Continuation)
+  ContinuationRunner* = createRunner(Continuation, Continuation)
 
 type
   ComeFrom = ref object of Continuation
@@ -76,7 +144,7 @@ proc comeFrom*[T](c: var T; into: Mailbox[T]): Continuation {.cpsMagic.} =
 
   # NOTE: the mom, which is Continuation, defines the reply mailbox type;
   #       thus, the return value of comeFrom()
-  var reply = newMailbox[Continuation](1)
+  var reply = newMailbox[Continuation]()
   c.mom = ComeFrom(fn: landing, mom: move c.mom, reply: reply)
   discard goto(c, into)
   result = recv reply
@@ -85,7 +153,8 @@ proc novelThread*[T](c: var T): T {.cpsMagic.} =
   ## move to a new thread; control resumes
   ## in the current thread when complete
   ## NOTE: specifying `T` goes away if cps loses color
-  const Waiter = createWaitron(T, T)
+  const Waiter = createRunner(T, T)
   var mailbox = newMailbox[T](1)
   var runtime = spawn(Waiter, mailbox)
   result = cast[T](comeFrom(c, mailbox))
+  join runtime

@@ -1,117 +1,166 @@
+# TODO: turn this into a continuation
+#       remove the lock
 import std/lists
+import std/rlocks
 
 import pkg/cps
 
 import insideout/runtimes
 import insideout/mailboxes
+import insideout/pools/saferemove   # a hack around stdlib bug
+
+when false:
+  import insideout/backlog
+  export backlog
+else:
+  template debug(args: varargs[untyped]) = discard
 
 type
   PoolNode[A, B] {.used.} = SinglyLinkedNode[Runtime[A, B]]
-  Pool*[A, B] = object  ## a collection of runtimes
+  PoolObj[A, B] = object  ## a collection of runtimes
+    lock: RLock
     list: SinglyLinkedList[Runtime[A, B]]
-  Factory[A, B] = proc(mailbox: Mailbox[B]) {.cps: A.}
+  Pool*[A, B] = AtomicRef[PoolObj[A, B]]
 
-proc safeRemove[T](L: var SinglyLinkedList[T], n: SinglyLinkedNode[T]): bool {.discardable.} =
-  ## Removes a node `n` from `L`.
-  ## Returns `true` if `n` was found in `L`.
-  ## Efficiency: O(n); the list is traversed until `n` is found.
-  ## Attempting to remove an element not contained in the list is a no-op.
-  ## Differs from stdlib's lists.remove() in that it has no special
-  ## cyclic behavior which causes memory errors.  🙄
-  runnableExamples:
-    import std/[sequtils, enumerate, sugar]
-    var a = [0, 1, 2].toSinglyLinkedList
-    let n = a.head.next
-    assert n.value == 1
-    assert a.remove(n) == true
-    assert a.toSeq == [0, 2]
-    assert a.remove(n) == false
-    assert a.toSeq == [0, 2]
-    a.addMoved(a) # cycle: [0, 2, 0, 2, ...]
-    a.remove(a.head)
-    let s = collect:
-      for i, ai in enumerate(a):
-        if i == 4: break
-        ai
-    assert s == [2, 2, 2, 2]
+proc `=copy`*[A, B](dest: var PoolObj[A, B]; src: PoolObj[A, B]) {.error.}
 
-  if n == L.head:
-    L.head = n.next
-    when false:
-      if L.tail.next == n:
-        L.tail.next = L.head # restore cycle
-  else:
-    var prev = L.head
-    while prev.next != n and prev.next != nil:
-      prev = prev.next
-    if prev.next == nil:
-      return false
-    prev.next = n.next
-    if L.tail == n:
-      L.tail = prev # update tail if we removed the last node
-  true
+proc isEmpty[A, B](pool: var PoolObj[A, B]): bool =
+  withRLock pool.lock:
+    result = pool.list.head.isNil
 
-func isEmpty*(pool: var Pool): bool {.inline.} =
-  pool.list.head.isNil
+proc isEmpty*[A, B](pool: Pool[A, B]): bool =
+  assert not pool.isNil
+  pool[].isEmpty
 
-proc drain*[A, B](pool: var Pool[A, B]) =
+proc drain[A, B](pool: var PoolObj[A, B]): Runtime[A, B] =
+  withRLock pool.lock:
+    if not pool.list.head.isNil:
+      result = pool.list.head.value
+      if pool.list.safeRemove(pool.list.head):
+        debug "removed ", result, " from pool."
+      else:
+        #debug "race removing runtime from pool"
+        raise Defect.newException "remove race"
+
+proc drain*[A, B](pool: Pool[A, B]): Runtime[A, B] {.discardable.} =
   ## remove a runtime from the pool;
   ## has no effect if the pool is empty
-  if not pool.isEmpty:
-    if not pool.list.safeRemove(pool.list.head):
-      raise ValueError.newException "remove race"
+  assert not pool.isNil
+  drain pool[]
 
-iterator mitems*[A, B](pool: var Pool[A, B]): var Runtime[A, B] =
-  ## work around sigmatch
-  for item in pool.list.mitems:
-    yield item
+proc join[A, B](pool: var PoolObj[A, B]) =
+  withRLock pool.lock:
+    for runtime in pool.list.mitems:
+      debug "joining ", runtime, " in pool..."
+      join runtime
+      debug "joined."
 
-proc shutdown*(pool: var Pool) =
-  ## shut down all runtimes in the pool; this operation is
-  ## performed automatically when the pool leaves scope
+proc join*[A, B](pool: Pool[A, B]) =
+  ## wait for all threads in the pool to complete
+  assert not pool.isNil
+  join pool[]
 
-  # XXX: this gets rewritten for detached...
-  for item in pool.mitems:
-    when insideoutDetached:
-      quit item
-    else:
-      item.mailbox.send nil
+proc halt[A, B](pool: var PoolObj[A, B]) =
+  withRLock pool.lock:
+    for item in pool.list.items:
+      debug "halting ", item, " in pool..."
+      halt item
+      debug "halted."
 
-  # remove runtimes as they terminate
+proc halt*[A, B](pool: Pool[A, B]) =
+  ## command all threads in the pool to halt
+  assert not pool.isNil
+  halt pool[]
+
+proc `=destroy`[A, B](pool: var PoolObj[A, B]) =
+  debug "destroying pool..."
+  if not getCurrentException().isNil:
+    halt pool
+  join pool
   while not pool.isEmpty:
-    drain pool
+    discard drain pool
+  deinitRLock pool.lock
 
-proc `=destroy`*[A, B](pool: var Pool[A, B]) =
-  if not pool.isEmpty:
-    shutdown pool
-
-proc `=copy`*[A, B](dest: var Pool[A, B]; src: Pool[A, B]) =
-  `=destroy`(dest)
-  dest.list = src.list
-
-proc add*[A, B](pool: var Pool[A, B]; runtime: Runtime[A, B]) =
+proc add*[A, B](pool: Pool[A, B]; runtime: Runtime[A, B]) =
+  ## add a supplied runtime to the pool
+  assert not pool.isNil
   var node: SinglyLinkedNode[Runtime[A, B]]
   new node
   node.value = runtime
-  pool.list.prepend node
+  withRLock pool[].lock:
+    debug "adding ", runtime, " to pool..."
+    pool[].list.prepend node
+    debug "added."
 
-proc spawn*[A, B](pool: var Pool[A, B]; factory: Factory[A, B]; mailbox: Mailbox[B]): Runtime[A, B] {.discardable.} =
+proc spawn*[A, B](pool: Pool[A, B]; factory: Factory[A, B];
+                  mailbox: Mailbox[B]): Runtime[A, B] {.discardable.} =
+  ## add a new runtime to the pool using the given factory and mailbox
+  assert not pool.isNil
+  debug "spawning ", $A, " against ", $B, " mailbox"
   result = spawn(factory, mailbox)
   pool.add result
+  debug "spawned."
 
-proc newPool*[A, B](factory: Factory[A, B]; mailbox: Mailbox[B]; initialSize: Positive = 1): Pool[A, B] =
-  var n = int initialSize  # allow it to reach zero
+proc newPool*[A, B](factory: Factory[A, B]): Pool[A, B] =
+  ## create a new, empty pool against the given factory
+  new result
+  initRLock result[].lock
+  debug "created pool."
+
+proc newPool*[A, B](factory: Factory[A, B]; mailbox: Mailbox[B];
+                    initialSize: Natural = 0): Pool[A, B] =
+  ## create a new pool against the given factory and spawn
+  ## `initialSize` runtimes, each with the given mailbox
+  result = newPool(factory)
+  var n = initialSize
   while n > 0:
     discard result.spawn(factory, mailbox)
     dec n
 
-# FIXME: temp-to-perm
-type
-  ContinuationPool*[T] = Pool[Continuation, T]
+proc cancel*[A, B](pool: Pool[A, B]) =
+  ## cancel all threads in the pool
+  assert not pool.isNil
+  withRLock pool[].lock:
+    for item in pool[].list.items:
+      debug "cancelling ", item, " in pool..."
+      cancel item
+      debug "cancelled."
 
-proc count*(pool: Pool): int =
+proc shutdown*[A, B](pool: Pool[A, B]) =
+  ## command all threads in the pool to halt,
+  ## then wait for each of them to complete
+  halt pool
+  join pool
+
+proc count*[A, B](pool: Pool[A, B]): int =
   ## count the number of runtimes in the pool
-  var head {.cursor.} = pool.list.head
-  while not head.isNil:
-    inc result
-    head = head.next
+  assert not pool.isNil
+  withRLock pool[].lock:
+    var head {.cursor.} = pool[].list.head
+    while not head.isNil:
+      inc result
+      head = head.next
+
+proc items*[A, B](pool: Pool[A, B]): seq[Runtime[A, B]] =
+  ## recover the threads from the pool
+  assert not pool.isNil
+  withRLock pool[].lock:
+    for item in pool[].list.mitems:
+      result.add item
+
+proc mitems*[A, B](pool: Pool[A, B]): seq[Runtime[A, B]] =
+  pool.items
+
+proc empty*[A, B](pool: Pool[A, B]) =
+  ## remove all runtimes from the pool
+  while not pool.isEmpty:
+    discard drain pool
+
+template stop*[A, B](pool: Pool[A, B]) =
+  halt pool
+
+proc `$`*[A, B](pool: Pool[A, B]): string =
+  ## return a string representation of the pool
+  assert not pool.isNil
+  withRLock pool[].lock:
+    result = "Pool[" & $A & ", " & $B & "](" & $pool.count & ")"
