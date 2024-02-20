@@ -75,13 +75,16 @@ proc application(home: Mailbox[Continuation]) {.cps: Continuation.} =
         info "home again"
         dec i
       closeWrite mail
+      closeRead mail
       closeWrite home
+      halt pool
     info "no more pool"
   notice "no more mail"
   info "application exit"
 
+import std/os
 proc main =
-  block:
+  block done:
     notice "init home mailbox"
     var home = newMailbox[Continuation]()
     notice "done init home mailbox"
@@ -90,10 +93,18 @@ proc main =
       while c.running:
         discard trampoline(move c)
         doAssert c.isNil
-        try:
-          c = recv home
-        except ValueError as e:
-          break
+        while true:
+          var r = home.tryRecv(c)
+          case r
+          of Received:
+            info "receipt in main"
+            break
+          else:
+            info "wait in main: ", r
+            sleep 100
+            if not home.waitForPoppable:
+              info "break done"
+              break done
   info "program exit"
 
 main()

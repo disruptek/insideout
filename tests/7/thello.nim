@@ -52,7 +52,7 @@ proc main() =
         whelp greetEveryone()
 
       debugEcho "i sent them"
-      disablePush remote
+      closeWrite remote
       debugEcho "disabled push"
 
       while 2 != load(hellos):

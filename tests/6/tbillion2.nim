@@ -11,7 +11,7 @@ import insideout
 import insideout/backlog
 
 let N =
-  if getEnv"GITHUB_ACTIONS" == "true" or not defined(danger) or isGrinding():
+  if getEnv"GITHUB_ACTIONS" == "true" or not defined(danger) or isGrinding() or insideoutSafeMode:
     1_000_000
   else:
     100_000_000

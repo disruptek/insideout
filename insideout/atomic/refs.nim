@@ -1,12 +1,13 @@
 import std/atomics
 import std/strutils
 
+import insideout/futexes
 import insideout/valgrind
 
 type
   Reference[T] = object
     value: T
-    rc: Atomic[int]
+    rc: Atomic[uint32]
 
   AtomicRef*[T] = object
     reference: ptr Reference[T]
@@ -60,7 +61,7 @@ proc remember*[T](arc: AtomicRef[T]) =
     discard fetchAdd(arc.reference.rc, 1, order = moSequentiallyConsistent)
     arc.debug "+ref", "(remember)"
 
-proc owners*[T](arc: AtomicRef[T]): int =
+proc owners*[T](arc: AtomicRef[T]): uint32 =
   ## returns the number of owners; this value is positive for
   ## initialized references and zero for all others
   if not arc.isNil:

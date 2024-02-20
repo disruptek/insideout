@@ -4,7 +4,7 @@ import std/genasts
 import std/macros
 import std/strutils
 
-import insideout/futex
+import insideout/futexes
 export checkWait, waitMask, wakeMask, FutexError
 
 from pkg/balls import checkpoint

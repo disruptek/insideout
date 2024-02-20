@@ -1,7 +1,7 @@
 import std/atomics
 
 import insideout/memalloc
-import insideout/futex
+import insideout/futexes
 
 # https://en.wikipedia.org/wiki/Peterson%27s_algorithm
 #

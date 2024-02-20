@@ -8,6 +8,14 @@ import pkg/cps
 import insideout
 import insideout/valgrind
 
+let N =
+  if getEnv"GITHUB_ACTIONS" == "true" or isGrinding() or insideoutSafeMode:
+    7
+  elif not defined(danger):
+    20
+  else:
+    50
+
 var ntotal: Atomic[int]
 
 proc main4d(mail: Mailbox[Continuation]; n: int) {.cps: Continuation.} =
@@ -44,13 +52,7 @@ proc main4(mail: Mailbox[Continuation]; n: int) {.cps: Continuation.} =
 
 proc go() =
 
-  var count = 50
-  when not defined(danger):
-    count = 20
-  if isUnderValgrind() or isSanitizing():
-    echo "valgrind/sanitizer detected"
-    count = 7
-
+  var count = N
   var cores = countProcessors() div 2
   var mail = newMailbox[Continuation]()
   var pool = newPool(ContinuationWaiter, mail, initialSize = cores)

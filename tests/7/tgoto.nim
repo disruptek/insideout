@@ -12,14 +12,14 @@ proc visit(home, away: Mailbox[Continuation]) {.cps: Continuation.} =
 proc server(box: Mailbox[Continuation]) {.cps: Continuation.} =
   while true:
     var visitor: Continuation
-    var receipt: WardFlag = tryRecv(box, visitor)
+    var receipt = tryRecv(box, visitor)
     case receipt
     of Paused, Empty:
       if not waitForPoppable(box):
         break
-    of Readable:
+    of Unreadable:
       break
-    of Writable:
+    of Received:
       discard trampoline(move visitor)
     else:
       discard
@@ -38,7 +38,8 @@ proc application(home: Mailbox[Continuation]) {.cps: Continuation.} =
   echo "going home"
   goto home
   echo "i am @ ", getThreadId(), " (home)"
-  disablePush away
+  closeWrite away
+  closeRead away
   echo "disabled push"
   join service
   echo "exit application"

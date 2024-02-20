@@ -11,7 +11,7 @@ import insideout
 import insideout/backlog
 
 let N =
-  if getEnv"GITHUB_ACTIONS" == "true" or not defined(danger) or isGrinding():
+  if getEnv"GITHUB_ACTIONS" == "true" or not defined(danger) or isGrinding() or insideoutSafeMode:
     1_000_000
   else:
     100_000_000
@@ -23,7 +23,9 @@ proc work() {.cps: Continuation.} =
 proc filler(queue: Mailbox[Continuation]; m: int) {.cps: Continuation.} =
   var m = m
   while m > 0:
-    queue.send: whelp work()
+    var c = whelp work()
+    while Delivered != queue.trySend(Continuation c):
+      discard
     dec m
 
 proc attempt(N: Positive; cores: int = countProcessors()) =

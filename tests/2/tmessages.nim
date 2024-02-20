@@ -14,7 +14,7 @@ import insideout
 import insideout/backlog
 
 let N =
-  if getEnv"GITHUB_ACTIONS" == "true" or not defined(danger) or isGrinding():
+  if getEnv"GITHUB_ACTIONS" == "true" or not defined(danger) or isGrinding() or insideoutSafeMode:
     1_000
   else:
     100_000
@@ -117,3 +117,4 @@ proc main =
     attempt(N, n)
 
 main()
+notice "exit"

@@ -27,8 +27,12 @@ import insideout/valgrind
 when false:
   import insideout/backlog
   export backlog
-else:
+elif defined(danger):
   template debug(args: varargs[untyped]) = discard
+else:
+  import std/strutils
+  template debug(args: varargs[string, `$`]) =
+    stdmsg().writeLine $getThreadId() & " " & args.join("")
 
 export mailboxes
 export runtimes
@@ -60,7 +64,7 @@ macro createWaitron*(A: typedesc; B: typedesc): untyped =
       debug "starting waitron"
       while true:
         var c: Continuation
-        var r: WardFlag = tryRecv(box, c.B)
+        var r = tryRecv(box, c.B)
         case r
         of Unreadable:
           debug "shutting down due to unreadable mailbox"

@@ -3,7 +3,7 @@ import std/posix
 
 import pkg/balls
 
-import insideout/futex
+import insideout/futexes
 
 suite "futexes":
   ## wait()

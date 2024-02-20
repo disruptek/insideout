@@ -10,7 +10,11 @@ import pkg/cps
 import insideout
 #import insideout/backlog
 
-let M = countProcessors()
+let M =
+  when insideoutSafeMode:
+    countProcessors() div 2
+  else:
+    countProcessors()
 let N =
   if getEnv"GITHUB_ACTIONS" == "true" or not defined(danger) or isGrinding():
     10_000
@@ -51,7 +55,7 @@ proc main(n: int) =
   #echo "done continuations"
   closeWrite remote
   # send the messages
-  for i in 0..N:
+  for i in 1..N:
     var x: ref int
     new x
     x[] = i
@@ -68,11 +72,11 @@ proc main(n: int) =
     case r
     of Received:
       #echo "recv ", x[], " ", z, " remain"
+      dec z
       discard
     elif not b.waitForPoppable():
       echo "failed out of receives"
       break
-    dec z
   echo "done ", N-z, " receives across ", n, " threads"
   closeWrite b
   # confirm that we received all the messages
@@ -81,20 +85,25 @@ proc main(n: int) =
     quit 1
   # confirm that we didn't receive extra messages
   var x: ref int
-  var r = b.tryRecv(x)
-  if r != Empty:
-    echo "receipt ", r, " of ", x[]
-    var e = if x.isNil: 0 else: 1
-    while not x.isNil and b.tryRecv(x) == Received:
-      echo "another extra ", x[]
+  var e = 0
+  while true:
+    var r = b.tryRecv(x)
+    case r
+    of Empty: break
+    of Received:
+      echo "extra ", x[]
       inc e
+    else:
+      echo r
+  if e != 0:
+    echo "received ", e, " extra messages"
     quit e
   #echo "close receive"
   closeRead b
+  #echo "close send"
+  closeRead a
   #echo "halt pool"
   halt pool
-  #echo "cancel pool"
-  cancel pool
 
 for n in 1..M:
   main(n)

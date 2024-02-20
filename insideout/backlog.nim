@@ -198,5 +198,6 @@ proc `=destroy`(g: var Grenade) =
   deinitCond C
   deinitLock L
   closeWrite queue          # drain the queue and close it
+  halt runtime              # signal the reader to exit
   join runtime              # wait for the reader to exit
 var g {.used.}: Grenade     # pull the pin

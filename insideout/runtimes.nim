@@ -7,7 +7,7 @@ import std/strutils
 import pkg/cps
 from pkg/cps/spec import cpsStackFrames
 
-import insideout/futex
+import insideout/futexes
 import insideout/atomic/flags
 import insideout/atomic/refs
 export refs
@@ -118,7 +118,10 @@ proc waitForFlags[A, B](runtime: var RuntimeObj[A, B]; wants: uint32): bool {.ra
     result = 0 != (has and wants)
     if result:
       break
-    let e = checkWait waitMask(runtime.flags, has, wants, 10.0)
+    when insideoutSafeMode:
+      let e = checkWait waitMask(runtime.flags, has, wants)
+    else:
+      let e = checkWait waitMask(runtime.flags, has, wants, 5.0)
     case e
     of 0, EAGAIN:
       discard
@@ -136,9 +139,9 @@ proc halt*[A, B](runtime: Runtime[A, B]): bool {.discardable.} =
 proc join*[A, B](runtime: sink Runtime[A, B]) {.raises: [FutexError, RuntimeError].} =
   ## block until the runtime has exited
   assert not runtime.isNil
-  if runtime.owners > 1:
-    if not waitForFlags(runtime[], <<!Running):
-      raise RuntimeError.newException "runtime failed to exit"
+  #if runtime.owners > 1:
+  if not waitForFlags(runtime[], <<!Running):
+    raise RuntimeError.newException "runtime failed to exit"
 
 proc cancel*[A, B](runtime: Runtime[A, B]): bool {.discardable.} =
   ## cancel a runtime; true if successful.
