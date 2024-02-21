@@ -9,6 +9,9 @@ import std/atomics
 import std/math
 import std/posix
 
+const
+  insideoutMaskFree* {.booldefine.} = true
+
 type
   FutexError* = object of OSError
   FutexOp = enum
@@ -76,19 +79,25 @@ proc waitMask*[T](monitor: var Atomic[T]; compare: T; mask: uint32): cint =
   if (mask and cast[uint32](compare)) != 0:
     raise FutexError.newException "mask and compare overlap"
   else:
-    result = sysFutex(addr monitor, WaitBitsPrivate,
-                      cast[uint32](compare), val3 = mask)
+    when insideoutMaskFree:
+      result = wait(monitor, compare)
+    else:
+      result = sysFutex(addr monitor, WaitBitsPrivate,
+                        cast[uint32](compare), val3 = mask)
 
 proc waitMask*[T](monitor: var Atomic[T]; compare: T; mask: uint32;
                   timeout: float): cint =
   ## Suspend a thread until any of `mask` bits are set;
   ## resume after `timeout` seconds.
-  if (mask and cast[uint32](compare)) != 0:
-    raise FutexError.newException "mask and compare overlap"
+  when insideoutMaskFree:
+    result = wait(monitor, compare, timeout)
   else:
-    var tm = getTimeSpec(CLOCK_MONOTONIC) + timeout.toTimeSpec
-    result = sysFutex(addr monitor, WaitBitsPrivate, cast[uint32](compare),
-                      timeout = addr tm, val3 = mask)
+    if (mask and cast[uint32](compare)) != 0:
+      raise FutexError.newException "mask and compare overlap"
+    else:
+      var tm = getTimeSpec(CLOCK_MONOTONIC) + timeout.toTimeSpec
+      result = sysFutex(addr monitor, WaitBitsPrivate, cast[uint32](compare),
+                        timeout = addr tm, val3 = mask)
 
 proc wake*[T](monitor: var Atomic[T]; count = high(uint32)): cint {.discardable.} =
   ## Wake as many as `count` threads from the same process.
@@ -101,10 +110,13 @@ proc wakeMask*[T](monitor: var Atomic[T]; mask: uint32; count = high(uint32)): c
   ## which are all waiting on any set bit in `mask`.
   # Returns the number of actually woken threads
   # or a Posix error code (if negative).
-  if mask == 0:
-    raise FutexError.newException "missing 32-bit mask"
+  when insideoutMaskFree:
+    wake(monitor, count = count)
   else:
-    result = sysFutex(addr monitor, WakeBitsPrivate, count, val3 = mask)
+    if mask == 0:
+      raise FutexError.newException "missing 32-bit mask"
+    else:
+      result = sysFutex(addr monitor, WakeBitsPrivate, count, val3 = mask)
 
 proc checkWait*(err: cint): cint {.discardable.} =
   if -1 == err:
