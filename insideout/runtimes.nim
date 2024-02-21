@@ -5,8 +5,8 @@ import std/posix
 import std/strutils
 
 import pkg/cps
-from pkg/cps/spec import cpsStackFrames
 
+import insideout/spec
 import insideout/futexes
 import insideout/atomic/flags
 import insideout/atomic/refs

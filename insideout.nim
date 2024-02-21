@@ -1,43 +1,19 @@
-when not defined(isNimSkull):
-  when (NimMajor, NimMinor) < (1, 7):
-    {.error: "insideout requires nim >= 1.7".}
-
-when not defined(gcArc) and not defined(gcOrc):
-  {.error: "insideout requires arc or orc memory management".}
-
-when not defined(useMalloc):
-  {.error: "insideout requires define:useMalloc".}
-
-when not (defined(c) or defined(cpp)):
-  {.error: "insideout requires backend:c or backend:cpp".}
-
-when not (defined(posix) and compileOption"threads"):
-  {.error: "insideout requires POSIX threads".}
-
 import std/genasts
 import std/macros
 
 import pkg/cps
 
+import insideout/spec
 import insideout/pools
 import insideout/mailboxes
 import insideout/runtimes
 import insideout/valgrind
 
-when false:
-  import insideout/backlog
-  export backlog
-elif defined(danger):
-  template debug(args: varargs[untyped]) = discard
-else:
-  import std/strutils
-  template debug(args: varargs[string, `$`]) =
-    stdmsg().writeLine $getThreadId() & " " & args.join("")
-
 export mailboxes
 export runtimes
 export valgrind
 export pools
+export insideoutSafeMode
 
 proc goto*[T](continuation: var T; where: Mailbox[T]): T {.cpsMagic.} =
   ## move the current continuation to another compute domain

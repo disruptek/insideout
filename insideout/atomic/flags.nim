@@ -4,10 +4,9 @@ import std/genasts
 import std/macros
 import std/strutils
 
+import insideout/spec
 import insideout/futexes
 export checkWait, waitMask, wakeMask, FutexError
-
-from pkg/balls import checkpoint
 
 type
   AtomicFlags16* = Atomic[uint16]
@@ -115,10 +114,20 @@ proc swap*[T: FlagsInts](flags: var AtomicFlags; past, future: T): bool {.discar
     else:
       value = (prior xor past) or future
 
-macro enable*(flags: var AtomicFlags; flag: enum): bool =
-  newCall(bindSym"swap", flags,
-          newCall(bindSym"<<!", flag), newCall(bindSym"<<", flag))
+macro enable*(flags: var AtomicFlags; flag: enum): untyped =
+  result =
+    genAstOpt({}, flags, flag):
+      if swap(flags, <<!flag, <<flag):
+        debug "enable ", flag
+        true
+      else:
+        false
 
 macro disable*(flags: var AtomicFlags; flag: enum): bool =
-  newCall(bindSym"swap", flags,
-          newCall(bindSym"<<", flag), newCall(bindSym"<<!", flag))
+  result =
+    genAstOpt({}, flags, flag):
+      if swap(flags, <<flag, <<!flag):
+        debug "disable ", flag
+        true
+      else:
+        false

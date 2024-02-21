@@ -5,15 +5,10 @@ import std/rlocks
 
 import pkg/cps
 
+import insideout/spec
 import insideout/runtimes
 import insideout/mailboxes
 import insideout/pools/saferemove   # a hack around stdlib bug
-
-when false:
-  import insideout/backlog
-  export backlog
-else:
-  template debug(args: varargs[untyped]) = discard
 
 type
   PoolNode[A, B] {.used.} = SinglyLinkedNode[Runtime[A, B]]

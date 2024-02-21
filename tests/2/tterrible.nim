@@ -21,23 +21,28 @@ let N =
   else:
     100_000
 
-proc foo(a, b: Mailbox[ref int]; i: int) {.cps: Continuation.} =
-  #echo "hello ", i
+proc foo(a, b: Mailbox[ref int]; j: int) {.cps: Continuation.} =
+  echo getThreadId(), " hello ", j
   while true:
     var i: ref int
     var r = a.tryRecv(i)
     case r
     of Received:
-      #echo "foo ", i[], " a.len: ", a.len, " b.len: ", b.len
-      while Delivered != b.trySend(i):
-        #echo "send fail ", i[]
+      #echo getThreadId(), " foo ", i[], " a.len: ", a.len, " b.len: ", b.len
+      case b.trySend(i):
+      of Delivered:
         discard
+      else:
+        echo getThreadId(), " send fail ", i[]
+        if not b.waitForPushable:
+          break
     else:
-      #echo "a: ", r, " a.len: ", a.len
+      #echo getThreadId(), " a: ", r, " a.len: ", a.len
       if not a.waitForPoppable():
-        #echo "failed out of foos"
+        echo getThreadId(), " failed ", j, " out of foos"
         break
-  #echo "goodbye ", i
+    cooperate()
+  echo getThreadId(), " goodbye ", j
 
 proc main(n: int) =
   # where to do work
@@ -46,7 +51,7 @@ proc main(n: int) =
   var a = newMailbox[ref int](n.uint32)    # input queue limited to thread count
   var b = newMailbox[ref int](N.uint32)    # output queue limited to message count
   # start the workers
-  var pool = newPool(ContinuationWaiter, remote, initialSize = n)  # thread count
+  var pool = newPool(ContinuationRunner, remote, initialSize = n)  # thread count
   # send the workers the work
   for i in 1..n:
     var c = whelp foo(a, b, i)
@@ -98,12 +103,10 @@ proc main(n: int) =
   if e != 0:
     echo "received ", e, " extra messages"
     quit e
-  #echo "close receive"
-  closeRead b
-  #echo "close send"
+  echo "close send"
   closeRead a
-  #echo "halt pool"
-  halt pool
+  echo "close receive"
+  closeRead b
 
 for n in 1..M:
   main(n)
