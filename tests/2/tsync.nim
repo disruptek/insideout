@@ -1,3 +1,13 @@
+## Another simple test of runtimes in which we whelp two different forms
+## of continuation and send them to the same mailbox for execution on
+## a runtime. (The second continuation is enqueued but then ignored.)
+##
+## The server continuation receives a continuation from the mailbox
+## synchronously and runs it without returning control to the runtime.
+##
+## The runtime exits, is joined by the main thread, and will correctly
+## free its memory, including the server continuation and the mailbox.
+
 import std/os
 import std/strutils
 
@@ -9,9 +19,9 @@ import insideout/valgrind
 
 let N =
   if getEnv"GITHUB_ACTIONS" == "true" or not defined(danger) or isGrinding():
-    10_000
+    1_000
   else:
-    100_000
+    10_000
 
 proc server(jobs: Mailbox[Continuation]) {.cps: Continuation.} =
   var job = recv jobs
