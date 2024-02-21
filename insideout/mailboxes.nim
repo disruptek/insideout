@@ -321,7 +321,7 @@ when insideoutSafeMode:
       mail.list.tail = move node
       result = Delivered
 else:
-  proc unboundedPush[T](mail: var MailboxObj[T]; item: sink T): MailFlag =
+  proc unboundedPush[T](mail: var MailboxObj[T]; item: var T): MailFlag =
     ## push an item without regard to bounds
     mail.queue.unsafePush(move item)
     #mail.queue.push(move item)
