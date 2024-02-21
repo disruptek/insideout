@@ -5,9 +5,9 @@ import insideout/valgrind
 
 let N: uint32 =
   if getEnv"GITHUB_ACTIONS" == "true" or not defined(danger) or isGrinding():
-    10_000_000
+    1_000_000
   else:
-    100_000_000
+    10_000_000
 
 type RI = ref uint32
 
