@@ -130,7 +130,11 @@ jobs:
         shell: bash
         run: |
           cd project
-          balls --path="." \
+          balls --path="." --define:insideoutSafeMode=on \
+                --backend:c --panics:on \
+                --mm:arc --define:useMalloc \
+                --define:debug --define:release --define:danger
+          balls --path="." --define:insideoutSafeMode=off \
                 --backend:c --panics:on \
                 --mm:arc --define:useMalloc \
                 --define:debug --define:release --define:danger
