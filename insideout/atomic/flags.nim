@@ -76,11 +76,11 @@ proc `!&&`*[T: FlagsInts](flags: T; mask: T): bool =
   ## mask != (flags & mask)
   mask != (flags and mask)
 
-proc put*[T: FlagsInts](flags: var Atomic[T]; value: T) =
-  store(flags, value, order = moSequentiallyConsistent)
+proc put*[T: FlagsInts](flags: var Atomic[T]; value: T; order = moRelease) =
+  store(flags, value, order = order)
 
-proc get*[T: FlagsInts](flags: var Atomic[T]): T =
-  load(flags, order = moSequentiallyConsistent)
+proc get*[T: FlagsInts](flags: var Atomic[T]; order = moAcquire): T =
+  load(flags, order = order)
 
 proc contains*[T: FlagsInts](flags: var Atomic[T]; mask: T): bool =
   get(flags) && mask
