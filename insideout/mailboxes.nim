@@ -307,7 +307,7 @@ proc markFull[T](mail: var MailboxObj[T]): MailFlag =
       checkWake wakeMask(mail.state, <<Full)
 
 when insideoutSafeMode:
-  proc unboundedPush[T](mail: var MailboxObj[T]; item: sink T): MailFlag =
+  proc unboundedPush[T](mail: var MailboxObj[T]; item: var T): MailFlag =
     withRLock mail.lock:
       when item isnot Continuation:
         debug "add item ", item[]
