@@ -1,23 +1,24 @@
-# TODO:
-# epoll_pwait +/- timeout
 import std/atomics
-import std/selectors
 import std/monotimes
 import std/posix
 
 import pkg/cps
-
 import pkg/trees/avl
 
+import insideout/times
 import insideout/atomic/refs
+export refs
 
 type
+  PollError* = object of OSError
+
   Id* = distinct culonglong
   Fd* = distinct cint
 
   EventQueueObj = object
     selector: Fd
-    registry: AVLTree[Id, ptr EpollData]
+    registry: Registry
+    watchers: Watchers
     interrupt: Fd
     interruptId: Id
     interest: Fd
@@ -25,11 +26,8 @@ type
 
   EventQueue* = AtomicRef[EventQueueObj]
 
-  EpollData = object
-    c: Continuation
-    fd: Fd
-    pad: int32
-    id: Id
+  Registry = AVLTree[Id, Record]
+  Watchers = AVLTree[Fd, Registry]
 
   State = enum
     Newborn
@@ -71,18 +69,27 @@ type
     EPOLL_CTL_DEL = 2
     EPOLL_CTL_MOD = 3
 
-  epoll_event {.header: "<sys/epoll.h>", completeStruct, importc.} = object
+  epoll_event* {.importc: "struct epoll_event",
+                 header: "<sys/epoll.h>".} = object
     events: cuint
-    data: ptr epoll_data_t
+    data: epoll_data
 
-  epoll_data_t {.header: "<sys/epoll.h>", completeStruct, importc.} = object
-    p: pointer
-    fd: cint
-    u32: cuint
-    u64: culonglong
+  RecordObj = object
+    c: Continuation
+    id: Id
+    fd: Fd
+    mask: cuint
+    events: set[Event]
+  Record = ref RecordObj
 
-static:
-  assert sizeof(epoll_data_t) == sizeof(EpollData)
+  epoll_data {.importc: "union epoll_data",
+               header: "<sys/epoll.h>".} = object
+    u64: uint64
+
+let SFD_NONBLOCK* {.importc, header: "<sys/signalfd.h>".}: cint
+let SFD_CLOEXEC* {.importc, header: "<sys/signalfd.h>".}: cint
+proc signalfd*(fd: cint; mask: ptr Sigset; flags: cint): cint
+  {.importc, header: "<sys/signalfd.h>".}
 
 proc `<`(a, b: Fd): bool {.borrow, used.}
 proc `==`(a, b: Fd): bool {.borrow, used.}
@@ -92,18 +99,9 @@ proc `==`(a, b: Id): bool {.borrow, used.}
 
 const
   invalidId: Id = 0.Id
-  invalidFd: Fd = -1.Fd
+  invalidFd*: Fd = -1.Fd
 
 proc `=copy`*[T](dest: var EventQueueObj; src: EventQueueObj) {.error.}
-
-proc state(eq: EventQueue): State =
-  ## compute the state of the event queue
-  if eq.isNil:
-    Newborn
-  #elif eq.registry.len == 0:
-  #  Pending
-  else:
-    Running
 
 converter toCint(event: epoll_events): uint32 = event.ord.uint32
 converter toCint(op: epoll_ctl_op): cint = op.cint
@@ -115,75 +113,17 @@ proc epoll_create(flags: cint): Fd
   {.noconv, importc: "epoll_create1", header: "<sys/epoll.h>".}
 
 proc epoll_ctl(epfd: cint; op: cint; fd: cint; event: ptr epoll_event): cint
-  {.noconv, importc: "epoll_ctl", header: "<sys/epoll.h>".}
+  {.noconv, importc, header: "<sys/epoll.h>".}
 
 proc epoll_wait(epfd: cint; events: ptr epoll_event;
                 maxevents: cint; timeout: cint): cint
-  {.noconv, importc: "epoll_wait", header: "<sys/epoll.h>".}
+  {.noconv, importc, header: "<sys/epoll.h>".}
 
-proc newEpollData[T](c: var T; fd: Fd; id: Id): ptr EpollData =
-  result = cast[ptr EpollData](alloc sizeof(EpollData)) # XXX: alloca?
-  result[] = EpollData(fd: fd, id: id, c: move c)
+proc epoll_pwait2(epfd: cint; events: ptr epoll_event; maxevents: cint;
+                  timeout: ptr TimeSpec; sigmask: ptr Sigset): cint
+  {.noconv, importc, header: "<sys/epoll.h>".}
 
-proc receive(c: Continuation; events: set[Event]): Continuation {.cpsMagic.} =
-  echo events
-  result = c
-
-proc waitForInterrupt(c: Continuation): Continuation {.cpsMagic.} =
-  #var data = newEpollData(id: eq.interruptId, fd: eq.interrupt, c: c)
-  #eq.registry.insert(eq.interruptId, data)
-  result = nil
-
-proc interruptor() {.cps: Continuation.} =
-  var i = 0
-  while true:
-    inc i
-    echo "interrupt " & $i
-    waitForInterrupt()
-
-proc register[T](eq: EventQueue; c: var T; fd: Fd; events: set[Event]): Id =
-  result = fetchAdd(eq[].nextId, 1, order = moSequentiallyConsistent).Id
-  var data = newEpollData(c, fd, result)
-  var ev: epoll_event
-  # defaults; ERROR and HANGUP are implicit
-  ev.events = EPOLLPRI or EPOLLERR or EPOLLHUP
-  # event types
-  if Read in events:
-    ev.events = ev.events or EPOLLIN or EPOLLRDHUP
-  if Write in events:
-    ev.events = ev.events or EPOLLOUT
-  if Level in events:
-    raise Defect.newException "not implemented"
-  elif Edge in events:
-    ev.events = ev.events or EPOLLET
-  else:
-    raise Defect.newException "specify Edge or Level"
-  ev.data = cast[ptr epoll_data_t](data)
-  let e = epoll_ctl(eq[].interest.cint, EPOLL_CTL_ADD, fd.cint, addr ev)
-  doAssert e == 0
-  # TODO: store id -> fd ?
-  # eq.registry.insert(result, data)
-
-proc init(eq: var EventQueue) =
-  if eq.isNil:
-    new eq
-    eq[].interest = epoll_create(O_CLOEXEC)
-    eq[].interrupt = eventfd(0, O_NONBLOCK or O_CLOEXEC)
-
-    var c = whelp interruptor()
-    eq[].interruptId = register(eq, c, eq[].interrupt, {Read, Edge})
-    #assert eq.interruptId in eq.registry
-
-    # registering a fd returns an id to the continuation. when a fd is
-    # ready, we use the id to retrieve the continuation. the continuation
-    # can also cancel the registration. we must also be able to watch
-    # the same fd from multiple continuations, as well as correctly
-    # registering and unregistering interest from a given continuation
-    # without affecting other continuations. we also need to know exactly
-    # which events are associated with which registrations, so that we can
-    # correctly unregister interest in an fd.
-
-proc handleError() =
+proc handleErrno() =
   case errno
   of EBADF:
     raise Defect.newException "bad file descriptor"
@@ -196,48 +136,176 @@ proc handleError() =
   else:
     raise Defect.newException "epoll_wait: " & $errno
 
-proc run*(eq: var EventQueue; timeout: cint = 1) =
-  case eq.state
-  of Newborn:
-    init eq
-  of Pending:
-    #raise Defect.newException "unlikely"
-    discard
-  of Running:
-    discard
-  var event: epoll_event
-  let e = epoll_wait(eq[].interest.cint, addr event, 1, -1)
-  if e == 0:
-    echo "timeout or interrupted"
-  elif e == -1:
-    handleError()
+proc checkPoll(e: cint): cint {.discardable.} =
+  if e == -1:
+    handleErrno()
+    0
   else:
-    let data = cast[ptr EpollData](event.data)
-    let id = data.id
-    let fd = data.fd
-    var c = data.c
-    var events: set[Event]
-    if 0 != (event.events and EPOLLIN.ord):
-      events.incl Read
-    if 0 != (event.events and EPOLLOUT.ord):
-      events.incl Write
-    if 0 != (event.events and EPOLLPRI.ord):
-      events.incl Priority
-    if 0 != (event.events and EPOLLRDHUP.ord):
-      events.incl Hangup
-    if 0 != (event.events and EPOLLERR.ord):
-      events.incl Error
-    if 0 != (event.events and EPOLLHUP.ord):
-      events.incl Hangup
+    e
 
-proc teardown(eq: EventQueue) =
-  case eq.state
-  of Newborn:
-    discard
+proc receive(c: Continuation; events: set[Event]): Continuation {.cpsMagic.} =
+  echo events
+  result = c
+
+proc composeEvent(eq: var EventQueueObj; events: set[Event]): epoll_event =
+  var id = fetchAdd(eq.nextId, 1, order = moAcquireRelease)
+  # defaults; ERROR and HANGUP are implicit
+  result.events = EPOLLPRI or EPOLLERR or EPOLLHUP
+  # event types
+  if Read in events:
+    result.events = result.events or EPOLLIN or EPOLLRDHUP
+  if Write in events:
+    result.events = result.events or EPOLLOUT
+  if Level in events:
+    raise Defect.newException "not implemented"
+  elif Edge in events:
+    result.events = result.events or EPOLLET
   else:
-    while EINTR == close eq[].interest:
-      discard
-    #let e = epoll_ctl(eq.interest, EPOLL_CTL_ADD, fd, addr ev)
+    raise Defect.newException "specify Edge or Level"
+  result.data.u64 = id
+
+template id(event: epoll_event): Id = Id(event.data.u64)
+
+proc addRegistry(eq: var EventQueueObj; record: Record) =
+  eq.registry.insert(record.id, record)
+  if record.fd in eq.watchers:
+    eq.watchers[record.fd].insert(record.id, record)
+  else:
+    var registry: Registry
+    registry.insert(record.id, record)
+    eq.watchers[record.fd] = registry
+
+proc delRegistry(eq: var EventQueueObj; record: Record) =
+  eq.registry.remove(record.id)
+  if record.fd in eq.watchers:
+    eq.watchers[record.fd].remove(record.id)
+    if eq.watchers[record.fd].len == 0:
+      eq.watchers.remove(record.fd)
+      checkPoll epoll_ctl(eq.interest.cint, EPOLL_CTL_DEL, record.fd.cint, nil)
+
+proc delRegistry(eq: var EventQueueObj; fd: Fd) =
+  if fd in eq.watchers:
+    for id in eq.watchers[fd].keys:
+      eq.registry.remove(id)
+    eq.watchers.remove(fd)
+    checkPoll epoll_ctl(eq.interest.cint, EPOLL_CTL_DEL, fd.cint, nil)
+
+proc register[T](eq: var EventQueueObj; c: var T; fd: Fd;
+                 events: set[Event]): Id =
+  var ev = composeEvent(eq, events)
+  var record =
+    Record(c: c, id: ev.id, fd: fd, mask: ev.events, events: events)
+  try:
+    eq.addRegistry record
+    checkPoll epoll_ctl(eq.interest.cint, EPOLL_CTL_ADD, fd.cint, addr ev)
+    result = ev.id
+  except CatchableError as e:
+    eq.delRegistry record
+    raise
+
+proc unregister(eq: var EventQueueObj; id: Id) =
+  if id in eq.registry:
+    delRegistry(eq, eq.registry[id])
+
+proc surrender(c: sink Continuation; eq: var EventQueueObj;
+               id: Id): Continuation {.cpsMagic.} =
+  unregister(eq, id)
+  result = c
+
+proc waitForInterrupt(c: sink Continuation): Continuation {.cpsMagic.} =
+  result = nil
+
+proc interruptor(eq: EventQueue) {.cps: Continuation.} =
+  var i = 0
+  while true:
+    inc i
+    echo "interrupt " & $i
+    waitForInterrupt()
+
+proc init*(eq: var EventQueueObj; interruptor: sink Continuation) =
+  ## initialize the eventqueue with the given interruptor
+  eq.interest = epoll_create(O_CLOEXEC)
+  eq.interrupt = eventfd(0, O_NONBLOCK or O_CLOEXEC)
+  eq.interruptId = register(eq, interruptor, eq.interrupt, {Read, Edge})
+  assert eq.interruptId in eq.registry
+
+proc init*(eq: var EventQueue) =
+  if eq.isNil:
+    new eq
+    var c = whelp interruptor(eq)
+    eq[].init(c)
+
+proc toSet(event: epoll_event): set[Event] =
+  if 0 != (event.events and EPOLLIN.ord):
+    result.incl Read
+  if 0 != (event.events and EPOLLOUT.ord):
+    result.incl Write
+  if 0 != (event.events and EPOLLPRI.ord):
+    result.incl Priority
+  if 0 != (event.events and EPOLLRDHUP.ord):
+    result.incl Hangup
+  if 0 != (event.events and EPOLLERR.ord):
+    result.incl Error
+  if 0 != (event.events and EPOLLHUP.ord):
+    result.incl Hangup
+
+proc runEvent(eq: var EventQueueObj; event: var epoll_event) {.deprecated.} =
+  let record =
+    try:
+      eq.registry[event.id]
+    except KeyError:
+      raise Defect.newException "lost record"
+      nil
+  # XXX
+  var events = event.toSet
+  var x = trampoline(move record.c)
+  record.c = move x
+
+template maybeInit(eq: var EventQueue): untyped =
+  if eq.isNil:
+    init eq
+
+proc wait*[T](eq: var EventQueue; events: var T;
+           timeout: ptr TimeSpec; mask: ptr Sigset): cint =
+  maybeInit eq
+  let quantity: cint = cint sizeof(events) div sizeof(epoll_event)
+  let eventsP = cast[ptr epoll_event](addr events)
+  result = epoll_pwait2(eq[].interest.cint, eventsP, quantity, timeout, mask)
+
+proc wait*[T](eq: var EventQueue; events: var T; timeout: float): cint =
+  var ts = timeout.toTimeSpec
+  result = wait(eq, events, timeout = addr ts, nil)
+
+proc wait*[T](eq: var EventQueue; events: var T): cint =
+  result = wait(eq, events, nil, nil)
+
+proc wait*(eq: var EventQueue): cint =
+  var events: array[1, epoll_event]
+  result = wait(eq, events)
+
+proc run*[T](eq: EventQueue; events: var T; quantity: cint) =
+  let maximum: cint = cint sizeof(events) div sizeof(epoll_event)
+  if quantity > maximum:
+    raise Defect.newException "insufficient event buffer size"
+  else:
+    var i = quantity
+    while i > 0:
+      dec i
+      eq[].runEvent(events[i])  # XXX: temporary
+
+proc `=destroy`*(eq: var EventQueueObj) =
+  # close epollfd
+  while EINTR == close eq.interest:
+    discard
+  # close interrupt eventfd
+  while EINTR == close eq.interrupt:
+    discard
+  # clear out the watchers quickly
+  reset eq.watchers
+  # destroy queued continuations in reverse order
+  while eq.registry.len > 0:
+    let (id, record) = eq.registry.popMax
+    delRegistry(eq, record)
 
 converter toFd*(s: SocketHandle): Fd = s.Fd
 converter toCint*(fd: Fd): cint = fd.cint

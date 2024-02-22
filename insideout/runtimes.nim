@@ -14,15 +14,15 @@ export refs
 
 import insideout/mailboxes
 import insideout/threads
-#import insideout/eventqueue
+import insideout/eventqueue
 
 const
   insideoutStackSize* {.intdefine.} = 16_384
   insideoutRenameThread* {.booldefine.} = defined(linux)
 
 type
-  SpawnError* = object of OSError
   RuntimeError* = object of OSError
+  SpawnError* = object of RuntimeError
   Dispatcher* = proc(p: pointer): pointer {.noconv.}
   Factory*[A, B] = proc(mailbox: Mailbox[B]) {.cps: A.}
 
@@ -30,12 +30,14 @@ type
     Halted     = 0    # 1 / 65536
     Frozen     = 1    # 2 / 131072
     Running    = 2    # 4 / 262144
+    Linked     = 3    # 8 / 524288
 
   RuntimeObj[A, B] = object
     handle: PThread
+    parent: PThread
     flags: AtomicFlags32
-    #events: Fd
-    #signals: Fd
+    eq: EventQueue
+    signals: Fd
     factory: Factory[A, B]
     mailbox: Mailbox[B]
     continuation: A
@@ -43,7 +45,7 @@ type
 
   Runtime*[A, B] = AtomicRef[RuntimeObj[A, B]]
 
-const deadFlags = <<Halted or <<!{Frozen, Running}
+const deadFlags = <<Halted or <<!{Frozen, Running, Linked}
 const bootFlags = <<!{Halted, Frozen, Running}
 
 proc `=copy`*[A, B](runtime: var RuntimeObj[A, B]; other: RuntimeObj[A, B]) {.error.} =
@@ -112,20 +114,24 @@ proc kill[A, B](runtime: var RuntimeObj[A, B]): bool {.used.} =
   ## kill a runtime; false if the runtime is not running
   signal(runtime, 9)
 
-proc waitForFlags[A, B](runtime: var RuntimeObj[A, B]; wants: uint32): bool {.raises: [FutexError].} =
+proc waitForFlags[A, B](runtime: var RuntimeObj[A, B]; wants: uint32): bool {.raises: [RuntimeError].} =
   while true:
     var has = get runtime.flags
     result = 0 != (has and wants)
     if result:
       break
-    let e = checkWait waitMask(runtime.flags, has, wants)
-    case e
+    let err =
+      try:
+        checkWait waitMask(runtime.flags, has, wants)
+      except FutexError as e:
+        raise RuntimeError.newException $e.name & ":" & e.msg
+    case err
     of 0, EINTR, EAGAIN:
       discard
     of ETIMEDOUT:
-      raise FutexError.newException "timeout booting thread"
+      raise RuntimeError.newException "timeout waiting for thread"
     else:
-      raise Defect.newException "unexpected futex error: " & $e
+      raise RuntimeError.newException "unexpected futex error: " & $err
 
 proc halt*[A, B](runtime: Runtime[A, B]): bool {.discardable.} =
   ## ask the runtime to exit; true if the runtime wasn't already halted
@@ -134,7 +140,7 @@ proc halt*[A, B](runtime: Runtime[A, B]): bool {.discardable.} =
   if result:
     checkWake wakeMask(runtime[].flags, <<Halted)
 
-proc join*[A, B](runtime: sink Runtime[A, B]) {.raises: [FutexError, RuntimeError].} =
+proc join*[A, B](runtime: sink Runtime[A, B]) {.raises: [RuntimeError].} =
   ## block until the runtime has exited
   assert not runtime.isNil
   #if runtime.owners > 1:
@@ -155,7 +161,14 @@ proc `=destroy`[A, B](runtime: var RuntimeObj[A, B]) =
   # queued waiters in kernel space
   checkWake wake(runtime.flags)
   for key, value in runtime.fieldPairs:
-    when key != "flags":
+    when key == "flags":
+      discard
+    elif key == "signals":
+      if value != invalidFd:
+        while EINTR == close value:
+          discard
+        value = invalidFd
+    else:
       reset value
 
 proc renderError(e: ref Exception; s = "crash;"): string =
@@ -269,6 +282,7 @@ proc dispatcher[A, B](runtime: sink Runtime[A, B]): cint =
       else:
         inc phase
     of 2:
+      # if the runtime is frozen, we need to wait for it to thaw
       if flags && <<Frozen:
         phase = 4
       else:
@@ -313,10 +327,10 @@ proc dispatcher[A, B](runtime: sink Runtime[A, B]): cint =
         else:                      # unfrozen
           phase = 0
       of ETIMEDOUT:
-        runtime[].error = FutexError.newException "timeout waiting to unfreeze"
+        runtime[].error = RuntimeError.newException "timeout waiting to unfreeze"
         nextIf 1
       else:
-        runtime[].error = FutexError.newException $strerror(errno)
+        runtime[].error = RuntimeError.newException $strerror(errno)
         nextIf errno
     else:
       when insideoutRenameThread:
@@ -349,41 +363,62 @@ template spawnCheck(err: cint): untyped =
   if e != 0:
     raise SpawnError.newException: $strerror(e)
 
-proc boot[A, B](runtime: var RuntimeObj[A, B];
-                size = insideoutStackSize) =
+proc initSignals[A, B](runtime: var RuntimeObj[A, B]): Sigset =
+  let flags = SFD_NONBLOCK or SFD_CLOEXEC
+  spawnCheck sigfillset(result)
+  runtime.signals = Fd signalfd(-1.cint, addr result, flags)
+  if invalidFd == runtime.signals:
+    raise SpawnError.newException: $strerror(errno)
+
+proc boot[A, B](runtime: var RuntimeObj[A, B]; flags = <<!Linked;
+                size = insideoutStackSize) {.raises: [SpawnError].} =
+  ## perform remaining setup of the runtime and boot the thread
+  let mask = initSignals runtime
+  let flags = flags or bootFlags
   var attr {.noinit.}: PThreadAttr
   spawnCheck pthread_attr_init(addr attr)
-  spawnCheck pthread_attr_setdetachstate(addr attr, PTHREAD_CREATE_DETACHED.cint)
+  spawnCheck pthread_attr_setsigmask_np(addr attr, addr mask)
+  spawnCheck pthread_attr_setdetachstate(addr attr, PTHREAD_CREATE_DETACHED)
   spawnCheck pthread_attr_setstacksize(addr attr, size.cint)
-
-  # i guess this is really happening...
-  put(runtime.flags, bootFlags)
-  spawnCheck pthread_create(addr runtime.handle, addr attr, thread[A, B],
-                            cast[pointer](addr runtime))
+  put(runtime.flags, flags)
+  runtime.parent = pthread_self()
+  try:
+    spawnCheck pthread_create(addr runtime.handle, addr attr, thread[A, B],
+                              cast[pointer](addr runtime))
+  except Exception as e:
+    raise SpawnError.newException $e.name & ": " & e.msg
   spawnCheck pthread_attr_destroy(addr attr)
-  while get(runtime.flags) == bootFlags:
+  while get(runtime.flags) == flags:
     # if the flags changed at all, the thread launch is successful
-    let e = checkWait wait(runtime.flags, bootFlags)
-    case e
+    var err =
+      try:
+        checkWait wait(runtime.flags, flags)
+      except FutexError as e:
+        raise SpawnError.newException e.msg
+        errno
+    case err
     of 0, EINTR, EAGAIN:
       discard
     of ETIMEDOUT:
-      raise FutexError.newException "timeout booting thread"
+      raise SpawnError.newException "timeout waiting for thread to boot"
     else:
-      raise Defect.newException "unexpected futex error: " & $e
+      raise SpawnError.newException "unexpected futex errno: " & $err
 
 proc spawn[A, void](runtime: var RuntimeObj[A, void]; continuation: sink A) =
-  ## add compute to mailbox
+  ## run the continuation in another thread
   runtime.continuation = continuation
-  runtime.mailbox = newMailbox[void]()
   boot runtime
+
+proc link[A, void](runtime: var RuntimeObj[A, void]; continuation: sink A) =
+  ## run the continuation in another thread; a failure in the child will
+  ## propogate to the parent
+  runtime.continuation = continuation
+  boot(runtime, flags = <<Linked)
 
 proc spawn[A, B](runtime: var RuntimeObj[A, B]; factory: Factory[A, B]; mailbox: Mailbox[B]) =
   ## add compute to mailbox
   runtime.factory = factory
   runtime.mailbox = mailbox
-  #assertReady runtime
-  #template assertReady(runtime: RuntimeObj): untyped =
   when not defined(danger):  # if this isn't dangerous, i don't know what is
     if runtime.mailbox.isNil:
       raise ValueError.newException "nil mailbox"
@@ -395,12 +430,6 @@ proc spawn*[A, B](factory: Factory[A, B]; mailbox: Mailbox[B]): Runtime[A, B] =
   ## create compute from a factory and mailbox
   new result
   spawn(result[], factory, mailbox)
-
-proc clone*[A, B](runtime: Runtime[A, B]): Runtime[A, B] =
-  ## clone a `runtime` to perform the same work
-  assert not runtime.isNil
-  new result
-  spawn(result[], runtime[].factory, runtime[].mailbox)
 
 proc spawn*[A](continuation: sink A): Runtime[A, Mailbox[void]] =
   new result

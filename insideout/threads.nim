@@ -61,11 +61,16 @@ when defined(macosx):
       raise Defect.newException:
         "renaming foreign threads is unsupported under osx"
 else:
+  proc pthread_attr_setsigmask_np*(attr: ptr PThreadAttr, mask: ptr Sigset): cint
+    {.importc, header: pthreadh.}
   proc pthread_setname_np*(thread: ThreadLike; name: cstring): cint
     {.importc, header: pthreadh.}
-
   proc pthread_setname_np*(name: cstring): cint =
     pthread_setname_np(pthread_self(), name)
+
+  # real-time signal range
+  let SIGRTMIN* {.importc, header: "<signal.h>".}: cint
+  let SIGRTMAX* {.importc, header: "<signal.h>".}: cint
 
 proc pinToCpu*(thread: ThreadLike; cpu: Natural) =
   when not defined(macosx):

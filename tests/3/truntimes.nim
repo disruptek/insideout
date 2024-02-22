@@ -47,7 +47,7 @@ proc main() =
 
   block:
     ## non-blocking mailbox sniffer
-    notice "runtime"
+    info "runtime"
     let jobs = newMailbox[Job]()
     info "[runtime] spawn"
     var runtime = Unblocking.spawn(jobs)

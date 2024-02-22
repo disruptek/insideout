@@ -2,18 +2,17 @@
 ##
 ## - Spinning: a continuation that does nothing but spin,
 ##             cooperating to return to the runtime's main
-##             loop where it can be halted gracefully
+##             loop where it will be halted gracefully
 ##
 ## - Quitting: a continuation that does nothing but return
-##
 
 ## We're testing that the runtimes can spawn, halt, and join with no
 ## timeouts, memory errors, races, etc. We manually halt and join the
 ## runtimes because we haven't learned about pools yet.
 
 ## This test was designed to expose bugs with runtime machinery which
-## are not due to the mailboxes, so we use void mailboxen here and
-## essentially ignore them in the test.
+## are not due to the mailboxes, so we use a void mailbox here and
+## simply ignore it in the test.
 
 import std/atomics
 import std/os
@@ -39,9 +38,6 @@ proc spinning(jobs: Mailbox[void]) {.cps: Continuation.} =
 proc quitting(jobs: Mailbox[void]) {.cps: Continuation.} =
   discard
 
-const Spinning = whelp spinning
-const Quitting = whelp quitting
-
 proc main() =
 
   block:
@@ -49,7 +45,7 @@ proc main() =
     #notice "runtime"
     let none = newMailbox[void]()
     #info "[runtime] spawn"
-    var runtime = Spinning.spawn(none)
+    var runtime = spawn: whelp spinning(none)
     #info "[runtime] halt"
     halt runtime
     #info "[runtime] join"
@@ -58,6 +54,7 @@ proc main() =
 
   block:
     ## dig them quitters
+    const Quitting = whelp quitting
     #notice "runtime"
     let none = newMailbox[void]()
     #info "[runtime] spawn"
