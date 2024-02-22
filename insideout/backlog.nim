@@ -8,10 +8,11 @@ import insideout/mailboxes
 import insideout/runtimes
 import insideout/threads
 
-const backlogBuffer = 64*1024  ## number of log messages to buffer
-const backlogFile = "backlog.txt"
+const backlogBuffer {.strdefine.} = 64*1024  ## number of log messages to buffer
+const backlogFile {.strdefine.} = "backlog.txt"
 const backlogPerms = S_IRUSR or S_IWUSR
 const backlogModes = O_CREAT or O_WRONLY or O_APPEND or O_NOATIME
+const backlogCoarse {.booldefine.} = defined(danger)
 
 type
   Level* = enum
@@ -93,7 +94,7 @@ let CLOCK_MONOTONIC_COARSE {.importc, header: "<time.h>", used.}: ClockId
 
 var n: int
 
-when false and defined(danger):
+when backlogCoarse:
   # faster but less accurate
   let rtClock = CLOCK_REALTIME_COARSE
   let mtClock = CLOCK_MONOTONIC_COARSE
