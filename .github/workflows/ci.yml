@@ -9,6 +9,10 @@ on:
     branches:
       - '*'
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   changes:
     # Disable the filter on scheduled runs because we don't want to skip those
@@ -59,9 +63,15 @@ jobs:
 
     name: '${{ matrix.os }} (${{ matrix.compiler.name }} ${{ matrix.compiler.version }})'
     runs-on: ${{ matrix.os }}
+
+    defaults:
+    run:
+      shell: bash
+      working-directory: project
+
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4.1.1
         with:
           path: project
 
@@ -81,7 +91,7 @@ jobs:
 
       - name: Fetch Nimble
         if: matrix.compiler.name == 'nimskull'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4.1.1
         with:
           path: nimble
           repository: alaviss/nimble
@@ -89,15 +99,13 @@ jobs:
 
       - name: Build Nimble
         if: matrix.compiler.name == 'nimskull'
-        shell: bash
         run: |
-          cd nimble
-          nim c -d:release -o:nimble src/nimble.nim
-          cp nimble "$NIMSKULL_BIN/nimble"
-          # Add nimble binary folder to PATH too
-          echo "$HOME/.nimble/bin" >> $GITHUB_PATH
+          nim c -d:release -o:"$NIMSKULL_BIN/nimble" src/nimble.nim
+          # Add nimble binary folder to PATH
+          echo "$HOME/.nimble/bin" >> "$GITHUB_PATH"
+        working-directory: nimble
         env:
-          NIMSKULL_BIN: ${{ steps.nimskull.outputs.binPath }}
+          NIMSKULL_BIN: ${{ steps.nimskull.outputs.bin-path }}
 
 #     - name: Valgrind
 #       shell: bash
@@ -108,7 +116,6 @@ jobs:
       - name: Dependencies
         shell: bash
         run: |
-          cd project
           nimble --accept install "https://github.com/disruptek/balls"
           nimble --accept develop
         env:
@@ -117,7 +124,6 @@ jobs:
       - name: Examples
         shell: bash
         run: |
-          cd project
           cd examples
           balls '***' --path=".." \
                 --backend:c --panics:on \
@@ -129,7 +135,6 @@ jobs:
       - name: Tests
         shell: bash
         run: |
-          cd project
           balls --path="." --define:insideoutSafeMode=on \
                 --backend:c --panics:on \
                 --mm:arc --define:useMalloc \
