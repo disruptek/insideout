@@ -65,9 +65,9 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     defaults:
-    run:
-      shell: bash
-      working-directory: project
+      run:
+        shell: bash
+        working-directory: project
 
     steps:
       - name: Checkout
