@@ -109,8 +109,8 @@ jobs:
         shell: bash
         run: |
           cd project
-          nimble --accept develop
           nimble --accept install "https://github.com/disruptek/balls"
+          nimble --accept develop
         env:
           NIM: ${{ matrix.compiler.name }}
 
