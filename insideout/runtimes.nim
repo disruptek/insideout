@@ -23,7 +23,6 @@ const
 type
   RuntimeError* = object of OSError
   SpawnError* = object of RuntimeError
-  Dispatcher* = proc(p: pointer): pointer {.noconv.}
   Factory*[A, B] = proc(mailbox: Mailbox[B]) {.cps: A.}
 
   RuntimeFlag* {.size: 2.} = enum
