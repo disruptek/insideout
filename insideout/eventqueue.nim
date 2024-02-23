@@ -1,13 +1,25 @@
 import std/atomics
-import std/monotimes
+#import std/macros
 import std/posix
 
 import pkg/cps
 import pkg/trees/avl
 
+import insideout/spec
 import insideout/times
+import insideout/importer
 import insideout/atomic/refs
 export refs
+
+macro signalfdh(n: untyped): untyped = importer(n, newLit"<sys/signalfd.h>")
+macro eventfdh(n: untyped): untyped = importer(n, newLit"<sys/eventfd.h>")
+macro epollh(n: untyped): untyped = importer(n, newLit"<sys/epoll.h>")
+macro epollh(s: untyped; n: untyped): untyped =
+  importer(n, newLit"<sys/epoll.h>", s)
+
+let EPOLL_CTL_ADD {.epollh.}: cint
+let EPOLL_CTL_MOD {.epollh.}: cint
+let EPOLL_CTL_DEL {.epollh.}: cint
 
 type
   PollError* = object of OSError
@@ -16,7 +28,6 @@ type
   Fd* = distinct cint
 
   EventQueueObj = object
-    selector: Fd
     registry: Registry
     watchers: Watchers
     interrupt: Fd
@@ -28,11 +39,6 @@ type
 
   Registry = AVLTree[Id, Record]
   Watchers = AVLTree[Fd, Registry]
-
-  State = enum
-    Newborn
-    Pending
-    Running
 
   Event = enum
     Read
@@ -64,13 +70,7 @@ type
     EPOLLONESHOT        = 1 shl 30   ## Sets one-shot behavior.
     EPOLLET             = 1 shl 31   ## Enables edge-triggered events.
 
-  epoll_ctl_op = enum
-    EPOLL_CTL_ADD = 1
-    EPOLL_CTL_DEL = 2
-    EPOLL_CTL_MOD = 3
-
-  epoll_event* {.importc: "struct epoll_event",
-                 header: "<sys/epoll.h>".} = object
+  epoll_event* {.epollh: "struct epoll_event".} = object
     events: cuint
     data: epoll_data
 
@@ -82,14 +82,12 @@ type
     events: set[Event]
   Record = ref RecordObj
 
-  epoll_data {.importc: "union epoll_data",
-               header: "<sys/epoll.h>".} = object
+  epoll_data {.epollh: "union epoll_data".} = object
     u64: uint64
 
-let SFD_NONBLOCK* {.importc, header: "<sys/signalfd.h>".}: cint
-let SFD_CLOEXEC* {.importc, header: "<sys/signalfd.h>".}: cint
-proc signalfd*(fd: cint; mask: ptr Sigset; flags: cint): cint
-  {.importc, header: "<sys/signalfd.h>".}
+let SFD_NONBLOCK* {.signalfdh.}: cint
+let SFD_CLOEXEC* {.signalfdh.}: cint
+proc signalfd*(fd: cint; mask: ptr Sigset; flags: cint): cint {.signalfdh.}
 
 proc `<`(a, b: Fd): bool {.borrow, used.}
 proc `==`(a, b: Fd): bool {.borrow, used.}
@@ -104,24 +102,19 @@ const
 proc `=copy`*[T](dest: var EventQueueObj; src: EventQueueObj) {.error.}
 
 converter toCint(event: epoll_events): uint32 = event.ord.uint32
-converter toCint(op: epoll_ctl_op): cint = op.cint
 
-proc eventfd(count: culonglong; flags: cint): Fd
-  {.noconv, importc: "eventfd", header: "<sys/eventfd.h>".}
+proc eventfd(count: culonglong; flags: cint): Fd {.noconv, eventfdh.}
 
-proc epoll_create(flags: cint): Fd
-  {.noconv, importc: "epoll_create1", header: "<sys/epoll.h>".}
+proc epoll_create(flags: cint): Fd {.noconv, epollh: "epoll_create1".}
 
 proc epoll_ctl(epfd: cint; op: cint; fd: cint; event: ptr epoll_event): cint
-  {.noconv, importc, header: "<sys/epoll.h>".}
+  {.noconv, epollh.}
 
 proc epoll_wait(epfd: cint; events: ptr epoll_event;
-                maxevents: cint; timeout: cint): cint
-  {.noconv, importc, header: "<sys/epoll.h>".}
+                maxevents: cint; timeout: cint): cint {.noconv, epollh.}
 
 proc epoll_pwait2(epfd: cint; events: ptr epoll_event; maxevents: cint;
-                  timeout: ptr TimeSpec; sigmask: ptr Sigset): cint
-  {.noconv, importc, header: "<sys/epoll.h>".}
+                  timeout: ptr TimeSpec; sigmask: ptr Sigset): cint {.noconv, epollh.}
 
 proc handleErrno() =
   case errno
@@ -134,7 +127,7 @@ proc handleErrno() =
   of EINVAL:
     raise Defect.newException "eventqueue uninitialized"
   else:
-    raise Defect.newException "epoll_wait: " & $errno
+    raise Defect.newException "epoll_wait: " & $errno & " " & $strerror(errno)
 
 proc checkPoll(e: cint): cint {.discardable.} =
   if e == -1:
@@ -142,6 +135,46 @@ proc checkPoll(e: cint): cint {.discardable.} =
     0
   else:
     e
+
+proc destroy[K, V](tree: var AVLTree[K, V]) =
+  while tree.len > 0:
+    tree.popMax
+
+proc delRegistry(eq: var EventQueueObj; fd: Fd) =
+  if fd in eq.watchers:
+    checkPoll epoll_ctl(eq.interest.cint, EPOLL_CTL_DEL, fd.cint, nil)
+    var registry = eq.watchers.pop(fd)
+    destroy registry
+
+proc delRegistry(eq: var EventQueueObj; record: Record) =
+  if not eq.registry.remove(record.id):
+    raise Defect.newException "event not found"
+  if record.fd in eq.watchers:
+    if not eq.watchers[record.fd].remove(record.id):
+      raise Defect.newException "event not found"
+    if eq.watchers[record.fd].len == 0:
+      eq.delRegistry record.fd
+    else:
+      raise Defect.newException "interest mod not impl"
+
+proc destroy(fd: var Fd) =
+  while EINTR == close fd:
+    discard
+  fd = invalidFd
+
+proc `=destroy`*(eq: var EventQueueObj) =
+  # close epollfd
+  destroy eq.interest
+  # close interrupt eventfd
+  destroy eq.interrupt
+  # clear out the watchers quickly
+  reset eq.watchers
+  # destroy queued continuations in reverse order
+  while eq.registry.len > 0:
+    let (id, record) = eq.registry.popMax()
+    eq.delRegistry record
+  for key, value in eq.fieldPairs:
+    reset value
 
 proc receive(c: Continuation; events: set[Event]): Continuation {.cpsMagic.} =
   echo events
@@ -175,21 +208,6 @@ proc addRegistry(eq: var EventQueueObj; record: Record) =
     registry.insert(record.id, record)
     eq.watchers[record.fd] = registry
 
-proc delRegistry(eq: var EventQueueObj; record: Record) =
-  eq.registry.remove(record.id)
-  if record.fd in eq.watchers:
-    eq.watchers[record.fd].remove(record.id)
-    if eq.watchers[record.fd].len == 0:
-      eq.watchers.remove(record.fd)
-      checkPoll epoll_ctl(eq.interest.cint, EPOLL_CTL_DEL, record.fd.cint, nil)
-
-proc delRegistry(eq: var EventQueueObj; fd: Fd) =
-  if fd in eq.watchers:
-    for id in eq.watchers[fd].keys:
-      eq.registry.remove(id)
-    eq.watchers.remove(fd)
-    checkPoll epoll_ctl(eq.interest.cint, EPOLL_CTL_DEL, fd.cint, nil)
-
 proc register[T](eq: var EventQueueObj; c: var T; fd: Fd;
                  events: set[Event]): Id =
   var ev = composeEvent(eq, events)
@@ -205,7 +223,7 @@ proc register[T](eq: var EventQueueObj; c: var T; fd: Fd;
 
 proc unregister(eq: var EventQueueObj; id: Id) =
   if id in eq.registry:
-    delRegistry(eq, eq.registry[id])
+    eq.delRegistry eq.registry[id]
 
 proc surrender(c: sink Continuation; eq: var EventQueueObj;
                id: Id): Continuation {.cpsMagic.} =
@@ -292,20 +310,6 @@ proc run*[T](eq: EventQueue; events: var T; quantity: cint) =
     while i > 0:
       dec i
       eq[].runEvent(events[i])  # XXX: temporary
-
-proc `=destroy`*(eq: var EventQueueObj) =
-  # close epollfd
-  while EINTR == close eq.interest:
-    discard
-  # close interrupt eventfd
-  while EINTR == close eq.interrupt:
-    discard
-  # clear out the watchers quickly
-  reset eq.watchers
-  # destroy queued continuations in reverse order
-  while eq.registry.len > 0:
-    let (id, record) = eq.registry.popMax
-    delRegistry(eq, record)
 
 converter toFd*(s: SocketHandle): Fd = s.Fd
 converter toCint*(fd: Fd): cint = fd.cint

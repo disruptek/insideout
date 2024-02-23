@@ -1,3 +1,5 @@
+import std/macros
+
 when not defined(isNimSkull):
   when (NimMajor, NimMinor) < (1, 7):
     {.error: "insideout requires nim >= 1.7".}

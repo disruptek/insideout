@@ -5,12 +5,10 @@ import insideout/eventqueue
 suite "event queue":
   block:
     ## init
-    var eq: EventQueue
-    check eq.isNil
-    init eq
-    check not eq.isNil
-  block:
-    ## auto-init
-    var eq: EventQueue
-    var events: array[1, epoll_event]
-    eq.wait(events, 0.001)
+    proc main =
+      var eq: EventQueue
+      var events: array[2, epoll_event]
+      check eq.isNil
+      check 0 == eq.wait(events, 0.001)
+      check not eq.isNil
+    main()
