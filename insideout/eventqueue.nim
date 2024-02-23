@@ -5,7 +5,6 @@ import std/posix
 import pkg/cps
 import pkg/trees/avl
 
-import insideout/spec
 import insideout/times
 import insideout/importer
 import insideout/atomic/refs
@@ -35,7 +34,7 @@ type
     interest: Fd
     nextId: Atomic[uint64]
 
-  EventQueue* = AtomicRef[EventQueueObj]
+  EventQueue* = distinct AtomicRef[EventQueueObj]
 
   Registry = AVLTree[Id, Record]
   Watchers = AVLTree[Fd, Registry]
@@ -85,6 +84,18 @@ type
   epoll_data {.epollh: "union epoll_data".} = object
     u64: uint64
 
+template `[]`*(eq: EventQueue): var EventQueueObj =
+  AtomicRef[EventQueueObj](eq)[]
+
+template isNil*(eq: EventQueue): bool =
+  AtomicRef[EventQueueObj](eq).isNil
+
+template new*(eq: var EventQueue) =
+  AtomicRef[EventQueueObj](eq).new
+
+template forget*(eq: var EventQueue) =
+  AtomicRef[EventQueueObj](eq).forget
+
 let SFD_NONBLOCK* {.signalfdh.}: cint
 let SFD_CLOEXEC* {.signalfdh.}: cint
 proc signalfd*(fd: cint; mask: ptr Sigset; flags: cint): cint {.signalfdh.}
@@ -98,6 +109,43 @@ proc `==`(a, b: Id): bool {.borrow, used.}
 const
   invalidId: Id = 0.Id
   invalidFd*: Fd = -1.Fd
+
+proc destroy(fd: var Fd) =
+  if fd != invalidFd:
+    while EINTR == close fd:
+      discard
+    fd = invalidFd
+
+proc destroy[K, V](tree: var AVLTree[K, V]) =
+  while tree.len > 0:
+    tree.popMax
+
+proc deinit(eq: var EventQueueObj) =
+  # close epollfd
+  destroy eq.interest
+  # close interrupt eventfd
+  destroy eq.interrupt
+  # clear out the watchers quickly
+  reset eq.watchers
+  # destroy queued continuations in reverse order
+  while eq.registry.len > 0:
+    eq.registry.popMax()
+  for key, value in eq.fieldPairs:
+    when key != "interest" and key != "interrupt":
+      reset value
+
+proc `=destroy`(eq: var EventQueueObj) =
+  deinit eq
+
+proc `=destroy`(eq: var EventQueue) =
+  if not eq.isNil:
+    deinit eq[]
+    AtomicRef[EventQueueObj](eq).`=destroy`
+
+proc deinit*(eq: var EventQueue) =
+  if not eq.isNil:
+    deinit eq[]
+    forget eq
 
 proc `=copy`*[T](dest: var EventQueueObj; src: EventQueueObj) {.error.}
 
@@ -136,10 +184,6 @@ proc checkPoll(e: cint): cint {.discardable.} =
   else:
     e
 
-proc destroy[K, V](tree: var AVLTree[K, V]) =
-  while tree.len > 0:
-    tree.popMax
-
 proc delRegistry(eq: var EventQueueObj; fd: Fd) =
   if fd in eq.watchers:
     checkPoll epoll_ctl(eq.interest.cint, EPOLL_CTL_DEL, fd.cint, nil)
@@ -156,25 +200,6 @@ proc delRegistry(eq: var EventQueueObj; record: Record) =
       eq.delRegistry record.fd
     else:
       raise Defect.newException "interest mod not impl"
-
-proc destroy(fd: var Fd) =
-  while EINTR == close fd:
-    discard
-  fd = invalidFd
-
-proc `=destroy`*(eq: var EventQueueObj) =
-  # close epollfd
-  destroy eq.interest
-  # close interrupt eventfd
-  destroy eq.interrupt
-  # clear out the watchers quickly
-  reset eq.watchers
-  # destroy queued continuations in reverse order
-  while eq.registry.len > 0:
-    let (id, record) = eq.registry.popMax()
-    eq.delRegistry record
-  for key, value in eq.fieldPairs:
-    reset value
 
 proc receive(c: Continuation; events: set[Event]): Continuation {.cpsMagic.} =
   echo events
@@ -283,33 +308,35 @@ template maybeInit(eq: var EventQueue): untyped =
   if eq.isNil:
     init eq
 
-proc wait*[T](eq: var EventQueue; events: var T;
+proc wait*(eq: var EventQueue; events: var openArray[epoll_event];
            timeout: ptr TimeSpec; mask: ptr Sigset): cint =
+  ## wait up to `timeout` for `events` under signal mask `mask`
   maybeInit eq
-  let quantity: cint = cint sizeof(events) div sizeof(epoll_event)
-  let eventsP = cast[ptr epoll_event](addr events)
-  result = epoll_pwait2(eq[].interest.cint, eventsP, quantity, timeout, mask)
+  result = epoll_pwait2(eq[].interest.cint, cast[ptr epoll_event](addr events[0]),
+                        events.len.cint, timeout, mask)
 
-proc wait*[T](eq: var EventQueue; events: var T; timeout: float): cint =
+proc wait*(eq: var EventQueue; events: var openArray[epoll_event];
+           timeout: float): cint =
+  ## wait up to `timeout` seconds for `events`
   var ts = timeout.toTimeSpec
   result = wait(eq, events, timeout = addr ts, nil)
 
-proc wait*[T](eq: var EventQueue; events: var T): cint =
+proc wait*(eq: var EventQueue; events: var openArray[epoll_event]): cint =
+  ## wait for events
   result = wait(eq, events, nil, nil)
 
 proc wait*(eq: var EventQueue): cint =
+  ## wait for the next event and discard it
   var events: array[1, epoll_event]
   result = wait(eq, events)
 
-proc run*[T](eq: EventQueue; events: var T; quantity: cint) =
-  let maximum: cint = cint sizeof(events) div sizeof(epoll_event)
-  if quantity > maximum:
+proc run*(eq: EventQueue; events: var openArray[epoll_event]; quantity: cint) =
+  if quantity > events.len:
     raise Defect.newException "insufficient event buffer size"
-  else:
-    var i = quantity
-    while i > 0:
-      dec i
-      eq[].runEvent(events[i])  # XXX: temporary
+  var i = quantity
+  while i > 0:
+    dec i
+    eq[].runEvent(events[i])  # XXX: temporary
 
 converter toFd*(s: SocketHandle): Fd = s.Fd
 converter toCint*(fd: Fd): cint = fd.cint

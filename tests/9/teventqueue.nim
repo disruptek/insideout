@@ -4,7 +4,7 @@ import insideout/eventqueue
 
 suite "event queue":
   block:
-    ## init
+    ## init, destroy
     proc main =
       var eq: EventQueue
       var events: array[2, epoll_event]
