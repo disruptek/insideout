@@ -6,9 +6,8 @@ suite "event queue":
   block:
     ## init, destroy
     proc main =
-      var eq: EventQueue
-      var events: array[2, epoll_event]
-      check eq.isNil
-      check 0 == eq.wait(events, 0.001)
-      check not eq.isNil
+      withNewEventQueue eq:
+        check not eq.isNil
+        var events: array[2, epoll_event]
+        check 0 == eq.wait(events, 0.001)
     main()

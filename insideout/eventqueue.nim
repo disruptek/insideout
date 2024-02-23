@@ -34,7 +34,7 @@ type
     interest: Fd
     nextId: Atomic[uint64]
 
-  EventQueue* = distinct AtomicRef[EventQueueObj]
+  EventQueue* = AtomicRef[EventQueueObj]
 
   Registry = AVLTree[Id, Record]
   Watchers = AVLTree[Fd, Registry]
@@ -84,18 +84,6 @@ type
   epoll_data {.epollh: "union epoll_data".} = object
     u64: uint64
 
-template `[]`*(eq: EventQueue): var EventQueueObj =
-  AtomicRef[EventQueueObj](eq)[]
-
-template isNil*(eq: EventQueue): bool =
-  AtomicRef[EventQueueObj](eq).isNil
-
-template new*(eq: var EventQueue) =
-  AtomicRef[EventQueueObj](eq).new
-
-template forget*(eq: var EventQueue) =
-  AtomicRef[EventQueueObj](eq).forget
-
 let SFD_NONBLOCK* {.signalfdh.}: cint
 let SFD_CLOEXEC* {.signalfdh.}: cint
 proc signalfd*(fd: cint; mask: ptr Sigset; flags: cint): cint {.signalfdh.}
@@ -137,15 +125,20 @@ proc deinit(eq: var EventQueueObj) =
 proc `=destroy`(eq: var EventQueueObj) =
   deinit eq
 
-proc `=destroy`(eq: var EventQueue) =
-  if not eq.isNil:
-    deinit eq[]
-    AtomicRef[EventQueueObj](eq).`=destroy`
-
 proc deinit*(eq: var EventQueue) =
+  ## deinitialize the eventqueue
   if not eq.isNil:
     deinit eq[]
-    forget eq
+
+template withNewEventQueue*(name: untyped; body: untyped): untyped =
+  ## create and initialize an eventqueue named `name` and run
+  ## `body` with it, deinitializing it at close of scope.
+  var name {.inject.}: EventQueue
+  init name
+  try:
+    body
+  finally:
+    deinit name
 
 proc `=copy`*[T](dest: var EventQueueObj; src: EventQueueObj) {.error.}
 
@@ -265,7 +258,7 @@ proc interruptor(eq: EventQueue) {.cps: Continuation.} =
     echo "interrupt " & $i
     waitForInterrupt()
 
-proc init*(eq: var EventQueueObj; interruptor: sink Continuation) =
+proc init(eq: var EventQueueObj; interruptor: sink Continuation) =
   ## initialize the eventqueue with the given interruptor
   eq.interest = epoll_create(O_CLOEXEC)
   eq.interrupt = eventfd(0, O_NONBLOCK or O_CLOEXEC)
