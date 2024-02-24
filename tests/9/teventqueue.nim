@@ -37,11 +37,9 @@ suite "event queue":
       checkpoint "yawn"
 
     proc main =
-      var jobs = newMailbox[Continuation]()
-      var pool = newPool(ContinuationRunner, jobs, 1)
       withNewEventQueue eq:
-        jobs.send: whelp snooze(eq)
-        join pool
+        var runtime = spawn: whelp snooze(eq)
+        join runtime
         var events: array[1, epoll_event]
         let n = eq.wait(events)
         eq.run(events, n)

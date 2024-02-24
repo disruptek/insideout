@@ -403,12 +403,14 @@ proc boot[A, B](runtime: var RuntimeObj[A, B]; flags = <<!Linked;
     else:
       raise SpawnError.newException "unexpected futex errno: " & $err
 
-proc spawn[A, void](runtime: var RuntimeObj[A, void]; continuation: sink A) =
+proc spawn(runtime: var RuntimeObj[Continuation, void];
+           continuation: sink Continuation) =
   ## run the continuation in another thread
   runtime.continuation = continuation
-  boot runtime
+  boot(runtime, flags = <<!Linked)
 
-proc link[A, void](runtime: var RuntimeObj[A, void]; continuation: sink A) =
+proc link(runtime: var RuntimeObj[Continuation, void];
+          continuation: sink Continuation) =
   ## run the continuation in another thread; a failure in the child will
   ## propogate to the parent
   runtime.continuation = continuation
@@ -430,9 +432,9 @@ proc spawn*[A, B](factory: Factory[A, B]; mailbox: Mailbox[B]): Runtime[A, B] =
   new result
   spawn(result[], factory, mailbox)
 
-proc spawn*[A](continuation: sink A): Runtime[A, Mailbox[void]] =
+proc spawn*[A](continuation: sink A): Runtime[Continuation, void] =
   new result
-  spawn[A, Mailbox[void]](result[], continuation)
+  spawn(result[], Continuation continuation)
 
 proc factory*[A, B](runtime: Runtime[A, B]): Factory[A, B] {.deprecated.} =
   ## recover the factory from the runtime
