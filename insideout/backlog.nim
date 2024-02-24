@@ -7,6 +7,7 @@ import pkg/cps
 import insideout/mailboxes
 import insideout/runtimes
 import insideout/threads
+import insideout/times
 
 const backlogBuffer {.strdefine.} = 64*1024  ## number of log messages to buffer
 const backlogFile {.strdefine.} = "backlog.txt"
@@ -28,9 +29,9 @@ type
   LogMessage* = ref object
     level: Level
     thread: int
-    monoTime: Timespec
-    realTime: Timespec
-    threadTime: Timespec
+    monoTime: TimeSpec
+    realTime: TimeSpec
+    threadTime: TimeSpec
     message: string
 
   Fd = cint  ## convenience for file descriptor, uh, description
@@ -89,9 +90,6 @@ initCond C
 
 proc cooperate(c: Continuation): Continuation {.cpsMagic.} = c
 
-let CLOCK_REALTIME_COARSE {.importc, header: "<time.h>", used.}: ClockId
-let CLOCK_MONOTONIC_COARSE {.importc, header: "<time.h>", used.}: ClockId
-
 var n: int
 
 when backlogCoarse:
@@ -117,16 +115,13 @@ proc createMessage(level: Level; args: varargs[string, `$`]): LogMessage =
     s.add(arg)
   result = stringMessage(level, s, getThreadId())
 
-proc `$`(ts: Timespec): string =
-  var f = ts.tv_sec.float + ts.tv_nsec / 1_000_000_000
-  result = fmt"{f:>10.6f}"
-
 proc emitLog(fd: Fd; msg: sink LogMessage) =
   inc n
   var ln = newStringOfCap(48 + msg.message.len)
   #const ft = "yyyy-MM-dd\'T\'HH:mm:ss\'.\'fff \'#\'"
   #ln.add msg.time.format(ft)
-  ln.add &"{msg.level:<6s} {n:>3d} #{msg.thread:<5d} {msg.monoTime} {msg.message}\n"
+  ln.add:
+    &"{msg.level:<6s} {n:>3d} #{msg.thread:<5d} {msg.monoTime} {msg.message}\n"
   block:
     let ln = ln.cstring
     var wrote = 0

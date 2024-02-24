@@ -1,5 +1,21 @@
+import std/macros
 import std/math
 import std/posix
+import std/strformat
+
+import insideout/importer
+
+macro timeh(n: untyped): untyped = importer(n, newLit"<time.h>")
+
+let CLOCK_REALTIME_COARSE* {.timeh.}: ClockId
+let CLOCK_MONOTONIC_COARSE* {.timeh.}: ClockId
+
+export ClockId, CLOCK_MONOTONIC, CLOCK_REALTIME,
+       CLOCK_THREAD_CPUTIME_ID, CLOCK_PROCESS_CPUTIME_ID
+
+proc `$`*(ts: TimeSpec): string =
+  var f = ts.tv_sec.float + ts.tv_nsec / 1_000_000_000
+  result = fmt"{f:>10.6f}"
 
 proc getTimeSpec*(clock: ClockId): TimeSpec =
   if 0 != clock_gettime(clock, result):

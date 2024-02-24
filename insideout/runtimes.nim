@@ -365,7 +365,7 @@ template spawnCheck(err: cint): untyped =
 proc initSignals[A, B](runtime: var RuntimeObj[A, B]): Sigset =
   let flags = SFD_NONBLOCK or SFD_CLOEXEC
   spawnCheck sigfillset(result)
-  runtime.signals = Fd signalfd(-1.cint, addr result, flags)
+  runtime.signals = signalfd(invalidFd, addr result, flags)
   if invalidFd == runtime.signals:
     raise SpawnError.newException: $strerror(errno)
 
