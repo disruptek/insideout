@@ -44,5 +44,5 @@ suite "event queue":
         let n = eq.wait(events)
         eq.run(events, n)
         check 1 == zzz.load
-        pruneOneShots(eq[], events, n)
+        eq.pruneOneShots(events, n)
     main()

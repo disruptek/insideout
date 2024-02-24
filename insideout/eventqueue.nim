@@ -1,5 +1,4 @@
 import std/atomics
-#import std/macros
 import std/posix
 
 import pkg/cps
@@ -30,11 +29,11 @@ type
   Fd* = distinct cint
 
   EventQueueObj = object
+    interest: Fd
     registry: Registry
     watchers: Watchers
     interrupt: Fd
     interruptId: Id
-    interest: Fd
     nextId: Atomic[uint64]
 
   EventQueue* = AtomicRef[EventQueueObj]
@@ -117,7 +116,7 @@ proc `==`(a, b: Id): bool {.borrow, used.}
 proc `<`(a, b: Fd): bool {.borrow, used.}
 proc `==`(a, b: Fd): bool {.borrow, used.}
 
-proc close(fd: var Fd) =
+proc close*(fd: var Fd) =
   if fd != invalidFd:
     while EINTR == posix.close(fd.cint):
       discard
@@ -272,6 +271,11 @@ proc register(eq: var EventQueueObj; c: sink Continuation;
     eq.delRegistry record
     raise
 
+proc register*(eq: EventQueue; c: sink Continuation;
+               fd: Fd; events: set[Event]): Id =
+  assert not eq.isNil
+  register(eq[], c, fd, events)
+
 proc unregister(eq: var EventQueueObj; id: Id) =
   assert eq.interest != invalidFd
   if id in eq.registry:
@@ -296,15 +300,21 @@ proc init(eq: var EventQueueObj; interruptor: sink Continuation) =
   ## initialize the eventqueue with the given interruptor
   eq.interest = checkErr epoll_create(O_CLOEXEC)
   assert eq.interest != invalidFd
-  eq.interrupt = eventfd(0, O_NONBLOCK or O_CLOEXEC)
-  eq.interruptId = register(eq, interruptor, eq.interrupt, {Read, Edge})
-  assert eq.interruptId in eq.registry
+  when false:
+    eq.interrupt = eventfd(0, O_NONBLOCK or O_CLOEXEC)
+    eq.interruptId = register(eq, interruptor, eq.interrupt, {Read, Edge})
+    assert eq.interruptId in eq.registry
+  else:
+    eq.interrupt = invalidFd
 
 proc init*(eq: var EventQueue) =
   if eq.isNil:
     new eq
-    var c = whelp interruptor(eq)
-    eq[].init(c)
+    when false:
+      var c = whelp interruptor(eq)
+      eq[].init(c)
+    else:
+      eq[].init(nil)
   assert eq[].interest != invalidFd
 
 proc toSet(event: epoll_event): set[Event] =
@@ -353,8 +363,8 @@ template maybeInit(eq: var EventQueue): untyped =
     init eq
   assert eq[].interest != invalidFd
 
-proc pruneOneShots*(eq: var EventQueueObj; events: var openArray[epoll_event];
-                    quantity: cint) =
+proc pruneOneShots(eq: var EventQueueObj; events: var openArray[epoll_event];
+                   quantity: cint) =
   ## remove any one-shot events from the registry
   var i = quantity
   while i > 0:
@@ -366,6 +376,11 @@ proc pruneOneShots*(eq: var EventQueueObj; events: var openArray[epoll_event];
       let record = eq.registry[id]
       if OneShot in record.events:
         eq.delRegistry record
+
+proc pruneOneShots*(eq: EventQueue; events: var openArray[epoll_event];
+                    quantity: cint) =
+  ## remove any one-shot events from the registry
+  eq[].pruneOneShots(events, quantity)
 
 proc wait*(eq: var EventQueue; events: var openArray[epoll_event];
            timeout: ptr TimeSpec; mask: ptr Sigset): cint =
@@ -398,13 +413,14 @@ proc run*(eq: EventQueue; events: var openArray[epoll_event]; quantity: cint) =
       dec i
       eq[].runEvent(events[i])  # XXX: temporary
 
-proc performRegister(c: sink Continuation; eq: EventQueue;
-                     fd: Fd; events: set[Event]): Continuation {.cpsMagic.} =
-  discard register(eq[], c, fd, events)
+proc suspend(c: sink Continuation; eq: EventQueue;
+             fd: Fd; events: set[Event]): Continuation {.cpsMagic.} =
+  discard register(eq, c, fd, events)
 
 proc register*(eq: EventQueue; fd: Fd; events: set[Event] = AllEvents): Id {.cps: Continuation.} =
   assert eq[].interest != invalidFd
-  performRegister(eq, fd, {Edge} + events)
+  assert fd != invalidFd
+  eq.suspend(fd, {Edge} + events)
 
 proc sleep*(eq: EventQueue; timeout: float) {.cps: Continuation.} =
   ## sleep for `timeout` seconds
@@ -412,7 +428,7 @@ proc sleep*(eq: EventQueue; timeout: float) {.cps: Continuation.} =
   var it: itimerspec
   it.it_value = timeout.toTimeSpec
   checkErr timerfd_settime(fd, 0, addr it, nil)
-  let id = eq.register(fd, {Read, OneShot})
+  discard eq.register(fd, {Read, OneShot})
 
 converter toFd*(s: SocketHandle): Fd = s.Fd
 converter toCint*(fd: Fd): cint = fd.cint
