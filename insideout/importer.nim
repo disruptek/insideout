@@ -34,6 +34,8 @@ proc importer*(n: NimNode; header: NimNode; csym: NimNode = nil): NimNode =
     let pe = importPragmaExpr(n[0], header, csym)
     result = newTree n.kind
     var p = copyNimTree n[4]
+    if p.kind == nnkEmpty:
+      p = nnkPragma.newTree
     for n in pe[1].items:
       p.add n  # add in our Pragma(s)
     for i in 0..<n.len:
