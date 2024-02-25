@@ -33,5 +33,5 @@ proc coop*(a: sink Continuation): Continuation {.cpsMagic.} =
   ## yield to the dispatcher
   a
 
-macro `{}`*(s: typed; field: untyped): typedesc =
+macro `{}`*(s: typed; field: untyped): untyped =
   (getImpl s).NormNode.pragmaArgument(field.strVal)
