@@ -15,6 +15,8 @@ import insideout/atomic/flags
 import insideout/atomic/refs
 export refs
 
+export insideoutSafeMode
+
 when insideoutSafeMode:
   import std/rlocks
   type

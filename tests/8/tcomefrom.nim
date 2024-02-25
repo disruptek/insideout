@@ -43,7 +43,7 @@ proc oracle(box: Mailbox[Query]) {.cps: Oracle.} =
       discard trampoline(move query)
     elif not waitForPoppable(box):
       break
-    cooperate()
+    coop()
 
 # define a service using a continuation bootstrap
 const SmartService = whelp oracle

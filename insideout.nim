@@ -13,7 +13,6 @@ export mailboxes
 export runtimes
 export valgrind
 export pools
-export insideoutSafeMode
 
 proc goto*[T](continuation: var T; where: Mailbox[T]): T {.cpsMagic.} =
   ## move the current continuation to another compute domain
@@ -21,10 +20,6 @@ proc goto*[T](continuation: var T; where: Mailbox[T]): T {.cpsMagic.} =
   # so we move the continuation and then send /that/ ref.
   where.send(move continuation)
   result = nil.T
-
-proc cooperate*(a: sink Continuation): Continuation {.cpsMagic.} =
-  ## yield to the dispatcher
-  a
 
 macro createWaitron*(A: typedesc; B: typedesc): untyped =
   ## The compiler really hates when you do this one thing;
@@ -36,7 +31,7 @@ macro createWaitron*(A: typedesc; B: typedesc): untyped =
   genAstOpt({}, name, A, B):
     proc name(box: Mailbox[B]) {.cps: A.} =
       ## continuously consume and run `B` continuations
-      mixin cooperate
+      mixin coop
       debug "starting waitron"
       while true:
         var c: Continuation
@@ -51,7 +46,7 @@ macro createWaitron*(A: typedesc; B: typedesc): untyped =
           while c.running:
             debug "will bounce continuation"
             c = bounce c
-            cooperate()
+            coop()
           # reap the local in the cps environment
           reset c
         else:
@@ -59,7 +54,7 @@ macro createWaitron*(A: typedesc; B: typedesc): untyped =
           if not box.waitForPoppable():
             debug "shutting down due to unavailable mailbox"
             break
-        cooperate()
+        coop()
       debug "exiting waitron"
 
     whelp name
@@ -74,7 +69,7 @@ macro createRunner*(A: typedesc; B: typedesc): untyped =
   genAstOpt({}, name, A, B):
     proc name(box: Mailbox[B]) {.cps: A.} =
       ## run a single `B` continuation
-      mixin cooperate
+      mixin coop
       debug "starting ", B, " runner"
       while true:
         var c: Continuation
@@ -84,7 +79,7 @@ macro createRunner*(A: typedesc; B: typedesc): untyped =
           while c.running:
             debug "will bounce continuation"
             c = bounce c
-            cooperate()
+            coop()
           reset c
           break
         of Unreadable:
@@ -98,7 +93,7 @@ macro createRunner*(A: typedesc; B: typedesc): untyped =
             debug "shutting down due to unavailable mailbox"
             break
           debug "wait complete"
-        cooperate()
+        coop()
       debug "exiting ", B, " runner"
 
     whelp name

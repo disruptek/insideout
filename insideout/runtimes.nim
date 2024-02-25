@@ -16,6 +16,8 @@ import insideout/mailboxes
 import insideout/threads
 import insideout/eventqueue
 
+export coop
+
 const
   insideoutStackSize* {.intdefine.} = 16_384
   insideoutRenameThread* {.booldefine.} = defined(linux)
@@ -177,13 +179,13 @@ proc renderError(e: ref Exception; s = "crash;"): string =
   result.add ": "
   result.add e.msg
 
-proc bounce*[T: Continuation](c: sink T): T =
-  var c: Continuation = move c
-  var fn = c.fn
-  result = T fn(move c)
-
 type
   ContinuationFn = proc (c: sink Continuation): Continuation {.nimcall.}
+
+proc bounce*[T: Continuation](c: sink T): T =
+  var c: Continuation = move c
+  var fn: ContinuationFn = c.fn
+  result = T fn(move c)
 
 proc deallocRuntime[A, B](runtime: pointer) {.noconv.} =
   ## called by the runtime to deallocate itself from its thread()
@@ -195,25 +197,37 @@ proc deallocRuntime[A, B](runtime: pointer) {.noconv.} =
     {.warning: "insideout does not support orc memory management".}
     GC_runOrc()
 
+template exceptionHandler(e: ref Exception; s: static string): cint =
+  ## some exception-handling boilerplate
+  when compileOption"stackTrace":
+    writeStackTrace()
+  stdmsg().writeLine:
+    renderError(e, s)
+  if errno > 0: errno else: 1
+
 proc teardown[A, B](p: pointer) {.noconv.} =
   ## we receive a pointer to a runtime object and we perform any necessary
   ## cleanup; this is run during thread destruction
+  mixin dealloc
   var runtime = cast[Runtime[A, B]](p)
   if runtime[].flags.enable Halted:
     checkWake wakeMask(runtime[].flags, <<Halted)
   try:
     try:
+      runtime[].continuation = dealloc(runtime[].continuation, A)
+    except CatchableError as e:
+      const cErrorMsg = "deallocating " & $A & " continuation;"
+      discard e.exceptionHandler cErrorMsg
+    try:
       reset runtime[].continuation
     except CatchableError as e:
       const cErrorMsg = "destroying " & $A & " continuation;"
-      stdmsg().writeLine:
-        renderError(e, cErrorMsg)
+      discard e.exceptionHandler cErrorMsg
     try:
       reset runtime[].mailbox
     except CatchableError as e:
       const mErrorMsg = "discarding " & $B & " mailbox;"
-      stdmsg().writeLine:
-        renderError(e, mErrorMsg)
+      discard e.exceptionHandler mErrorMsg
   finally:
     put(runtime[].flags, <<!{Running, Frozen} or <<Halted)
     # wake all waiters on the flags in order to free any queued
@@ -228,16 +242,10 @@ template mayCancel(r: typed; body: typed): untyped {.used.} =
   finally:
     r = pthread_setcancelstate(PTHREAD_CANCEL_DISABLE.cint, addr prior)
 
-template exceptionHandler(e: ref Exception; s: static string): cint =
-  when compileOption"stackTrace":
-    writeStackTrace()
-  stdmsg().writeLine:
-    renderError(e, s)
-  if errno > 0: errno else: 1
-
 const emptyTimeSpec = TimeSpec(tv_sec: 0.Time, tv_nsec: 0.clong)
 
 proc process[A, B](eq: var EventQueue; runtime: var RuntimeObj[A, B]): cint =
+  ## process any events or signals in each iteration of the event loop
   var events {.noinit.}: array[1, epoll_event]
   try:
     let ready = eq.wait(events, timeout = addr emptyTimeSpec, nil)
@@ -247,9 +255,11 @@ proc process[A, B](eq: var EventQueue; runtime: var RuntimeObj[A, B]): cint =
       eq.run(events, ready)
       eq.pruneOneShots(events, ready)
   except CatchableError as e:
-    result = exceptionHandler(e, $A & " event handler crash;")
+    const pErrorMsg = $A & " event handler crash;"
+    result = e.exceptionHandler pErrorMsg
 
 proc loop[A, B](eq: var EventQueue; runtime: var RuntimeObj[A, B]): cint =
+  ## the main event loop which operates the runtime
   const pleaseHalt = high int
   var phase: int
 
@@ -273,8 +283,7 @@ proc loop[A, B](eq: var EventQueue; runtime: var RuntimeObj[A, B]): cint =
       phase = pleaseHalt
 
     case phase
-    of 0:
-      # boot the continuation if we haven't already done so
+    of 0: # boot the continuation if we haven't already done so
       if runtime.continuation.isNil:
         runtime.continuation = runtime.factory.call(runtime.mailbox)
       # check for a bogus/missing factory composition
@@ -283,18 +292,17 @@ proc loop[A, B](eq: var EventQueue; runtime: var RuntimeObj[A, B]): cint =
         nextIf 1
       else:
         inc phase
-    of 1:
+    of 1: # rename the thread to indicate that we're running
       when insideoutRenameThread:
         nextIf pthread_setname_np(runtime.handle, "io: running")
       else:
         inc phase
-    of 2:
-      # if the runtime is frozen, we need to wait for it to thaw
+    of 2: # if the runtime is frozen, we need to wait for it to thaw
       if flags && <<Frozen:
         phase = 4
       else:
         inc phase
-    of 3:
+    of 3: # we're running a continuation normally
       try:
         var fn: ContinuationFn = runtime.continuation.fn
 
@@ -302,23 +310,25 @@ proc loop[A, B](eq: var EventQueue; runtime: var RuntimeObj[A, B]): cint =
         # crashes here, we need to be able to free its environment
         # from within teardown()
 
+        {.push objChecks: off.}                    # old nim
         var temporary: Continuation = fn(runtime.continuation)
-        runtime.continuation = A temporary
+        runtime.continuation = cast[A](temporary)  # nimskull
+        {.pop.}
 
         # verbosity due to sanitizers
         if not runtime.continuation.isNil and not runtime.continuation.fn.isNil:
           dec phase  # check to see if we've been frozen
         else:
-          break      # normal termination
+          break      # normal termination of the event loop
       except CatchableError as e:
         result = exceptionHandler(e, $A & " dispatcher crash;")
         phase = pleaseHalt
-    of 4:
+    of 4: # we're entering the frozen state
       when insideoutRenameThread:
         nextIf pthread_setname_np(runtime.handle, "io: frozen")
       else:
         inc phase
-    of 5:
+    of 5: # the frozen state, where we wait for the runtime to thaw
       case checkWait waitMask(runtime.flags, flags, <<Halted + <<!Frozen)
       of EINTR:
         discard
@@ -336,7 +346,7 @@ proc loop[A, B](eq: var EventQueue; runtime: var RuntimeObj[A, B]): cint =
       else:
         runtime.error = RuntimeError.newException $strerror(errno)
         nextIf errno
-    else:
+    else: # we're crashing out of the loop
       when insideoutRenameThread:
         discard pthread_setname_np(runtime.handle, "io: halted")
       if result == 0:
@@ -430,14 +440,12 @@ proc boot[A, B](runtime: var RuntimeObj[A, B]; flags = <<!Linked;
     else:
       raise SpawnError.newException "unexpected futex errno: " & $err
 
-proc spawn(runtime: var RuntimeObj[Continuation, void];
-           continuation: sink Continuation) =
+proc spawn[A](runtime: var RuntimeObj[A, void]; continuation: sink A) =
   ## run the continuation in another thread
   runtime.continuation = continuation
   boot(runtime, flags = <<!Linked)
 
-proc link(runtime: var RuntimeObj[Continuation, void];
-          continuation: sink Continuation) =
+proc link[A](runtime: var RuntimeObj[A, void]; continuation: sink A) =
   ## run the continuation in another thread; a failure in the child will
   ## propogate to the parent
   runtime.continuation = continuation
@@ -459,9 +467,9 @@ proc spawn*[A, B](factory: Factory[A, B]; mailbox: Mailbox[B]): Runtime[A, B] =
   new result
   spawn(result[], factory, mailbox)
 
-proc spawn*[A](continuation: sink A): Runtime[Continuation, void] =
+proc spawn*[A](continuation: sink A): Runtime[A, void] =
   new result
-  spawn(result[], Continuation continuation)
+  spawn(result[], continuation)
 
 proc factory*[A, B](runtime: Runtime[A, B]): Factory[A, B] {.deprecated.} =
   ## recover the factory from the runtime

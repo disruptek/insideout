@@ -29,11 +29,9 @@ let N =
   else:
     10_000
 
-proc cooperate(c: Continuation): Continuation {.cpsMagic.} = c
-
 proc spinning(jobs: Mailbox[void]) {.cps: Continuation.} =
   while true:
-    cooperate()
+    coop()
 
 proc quitting(jobs: Mailbox[void]) {.cps: Continuation.} =
   discard

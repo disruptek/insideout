@@ -51,7 +51,7 @@ proc foo(a, b: Mailbox[ref int]; j: int) {.cps: Continuation.} =
         if not a.waitForPoppable():
           debug "failed ", j, " out of recv"
           break
-      cooperate()
+      coop()
   debug "goodbye ", j
 
 proc main(n: int) =

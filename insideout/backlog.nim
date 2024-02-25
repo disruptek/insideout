@@ -88,8 +88,6 @@ initLock L
 var C: Cond
 initCond C
 
-proc cooperate(c: Continuation): Continuation {.cpsMagic.} = c
-
 var n: int
 
 when backlogCoarse:
@@ -156,7 +154,7 @@ proc reader(queue: Mailbox[LogMessage]) {.cps: Continuation.} =
       fd.emitLog(move msg)
     elif not queue.waitForPoppable():
       break
-    cooperate()
+    coop()
 
   when logLevel <= lvlNone:
     fd.emitLog lvlNone.stringMessage("goodbye backlog", thread = threadId)
