@@ -16,7 +16,7 @@ when not (defined(c) or defined(cpp)):
 when not (defined(posix) and compileOption"threads"):
   {.error: "insideout requires POSIX threads".}
 
-const insideoutSafeMode* {.booldefine.} = false
+const insideoutSafeMode* {.booldefine.} = not (compiles do: import loony)
 const insideoutGratuitous* {.booldefine.} = false
 
 when insideoutGratuitous:
