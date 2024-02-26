@@ -8,3 +8,4 @@ profile.coz
 nimblemeta.json
 perf.data
 perf.data.old
+heaptrack.*.zst
