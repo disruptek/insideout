@@ -1,6 +1,10 @@
 import std/posix
 export PThread, PThreadAttr
 
+const
+  insideoutStackSize* {.intdefine.} = 16_384
+  insideoutRenameThread* {.booldefine.} = defined(linux)
+
 when (NimMajor, NimMinor) > (1, 6):
   from std/private/threadtypes import pthreadh, SysThread, CpuSet, cpusetZero, cpusetIncl, setAffinity
   export SysThread

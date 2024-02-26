@@ -18,10 +18,6 @@ import insideout/eventqueue
 
 export coop
 
-const
-  insideoutStackSize* {.intdefine.} = 16_384
-  insideoutRenameThread* {.booldefine.} = defined(linux)
-
 type
   RuntimeError* = object of OSError
   SpawnError* = object of RuntimeError
