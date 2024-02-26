@@ -132,7 +132,7 @@ jobs:
         env:
           NIM: ${{ matrix.compiler.name }}
 
-      - name: Tests: Locks
+      - name: Locked Tests
         shell: bash
         run: |
           balls --path="." --define:insideoutSafeMode=on \
@@ -140,7 +140,7 @@ jobs:
                 --mm:arc --define:useMalloc \
                 --define:debug --define:release --define:danger
 
-      - name: Tests: Loony
+      - name: Loony Tests
         shell: bash
         run: |
           balls --path="." --define:insideoutSafeMode=off \
