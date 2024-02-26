@@ -5,12 +5,15 @@ import pkg/balls
 
 import insideout
 import insideout/backlog
+import insideout/monitors
 
 const N = 3
 
 proc foo(i: int) {.cps: Continuation.} =
   ## do something... or rather, nothing
   discard
+
+makeHalter[Continuation, Continuation]()
 
 suite "runtimes + mailboxes + pools":
   block:
@@ -76,6 +79,29 @@ suite "runtimes + mailboxes + pools":
           remote.send:
             whelp foo(i)
         info "might join"
+    main()
+
+  block:
+    ## gracefully halt a blocked runtime
+    proc main() =
+      let remote = newMailbox[Continuation]()
+      var runtime = spawn(ContinuationWaiter, remote)
+      doAssert runtime.state == Running
+      halter(runtime, 0.1)
+      join runtime
+    main()
+
+  block:
+    ## halt a runtime from another thread
+    proc main() =
+      let remote = newMailbox[Continuation]()
+      var runtime = spawn(ContinuationWaiter, remote)
+      doAssert runtime.state == Running
+      var k = spawn: whelp halter(runtime, 0.1)
+      doAssert k.state == Running
+      join k
+      join runtime
+      doAssert runtime.state == Halted
     main()
 
 when false:
