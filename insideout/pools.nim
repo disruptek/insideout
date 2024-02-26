@@ -60,12 +60,22 @@ proc halt[A, B](pool: var PoolObj[A, B]) =
     for item in pool.list.items:
       debug "halting ", item, " in pool..."
       halt item
-      debug "halted."
 
 proc halt*[A, B](pool: Pool[A, B]) =
   ## command all threads in the pool to halt
   assert not pool.isNil
   halt pool[]
+
+proc signal[A, B](pool: var PoolObj[A, B]; sig: int) =
+  withRLock pool.lock:
+    for item in pool.list.items:
+      debug "signal (", sig, ") ", item, " in pool..."
+      signal(item, sig)
+
+proc signal*[A, B](pool: Pool[A, B]; sig: int) =
+  ## command all threads in the pool to halt
+  assert not pool.isNil
+  signal(pool[], sig)
 
 proc `=destroy`[A, B](pool: var PoolObj[A, B]) =
   debug "destroying pool..."

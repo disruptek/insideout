@@ -103,9 +103,7 @@ proc cancel[A, B](runtime: var RuntimeObj[A, B]): bool {.discardable.} =
 
 proc signal[A, B](runtime: var RuntimeObj[A, B]; sig: int): bool {.used.} =
   ## send a signal to a runtime; true if successful
-  let flags = get runtime.flags
-  if flags && (<<!Halted + <<Running):  # FIXME: allow signals in teardown?
-    result = 0 == pthread_kill(runtime.handle, sig.cint)
+  0 == pthread_kill(runtime.handle, sig.cint)
 
 proc kill[A, B](runtime: var RuntimeObj[A, B]): bool {.used.} =
   ## kill a runtime; false if the runtime is not running
@@ -497,3 +495,7 @@ proc resume*[A, B](runtime: Runtime[A, B]) =
     checkWake wakeMask(runtime[].flags, <<!Frozen)
 
 template stop*[A, B](runtime: Runtime[A, B]) {.deprecated.} = halt runtime
+
+proc signal*[A, B](runtime: Runtime[A, B]; sig: int): bool {.discardable.} =
+  ## send a signal to a runtime; true if successful
+  signal(runtime[], sig)
