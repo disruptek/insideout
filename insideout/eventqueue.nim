@@ -175,19 +175,6 @@ proc epoll_pwait2(epfd: cint; events: ptr epoll_event; maxevents: cint;
                   timeout: ptr TimeSpec; sigmask: ptr Sigset): cint
                  {.noconv, epollh.}
 
-proc handleErrno() =
-  case errno
-  of EBADF:
-    raise Defect.newException "bad file descriptor"
-  of EFAULT:
-    raise Defect.newException "bad address"
-  of EINTR:
-    discard
-  of EINVAL:
-    raise Defect.newException "eventqueue uninitialized"
-  else:
-    raise Defect.newException "epoll_wait: " & $errno & " " & $strerror(errno)
-
 proc checkErr[T](err: T): T {.discardable.} =
   if err.cint == -1:
     raise OSError.newException $strerror(errno)
@@ -300,6 +287,8 @@ proc init(eq: var EventQueueObj; interruptor: sink Continuation) =
   ## initialize the eventqueue with the given interruptor
   eq.interest = checkErr epoll_create(O_CLOEXEC)
   assert eq.interest != invalidFd
+  # ensure the first id != invalidId
+  discard fetchAdd(eq.nextId, 1, order = moAcquireRelease)
   when false:
     eq.interrupt = eventfd(0, O_NONBLOCK or O_CLOEXEC)
     eq.interruptId = register(eq, interruptor, eq.interrupt, {Read, Edge})
@@ -347,16 +336,10 @@ proc toSet(event: epoll_event): set[Event] =
     result.incl Edge
 
 proc runEvent(eq: var EventQueueObj; event: var epoll_event) {.deprecated.} =
-  let record =
-    try:
-      eq.registry[event.id]
-    except KeyError:
-      raise Defect.newException "lost record"
-      nil
-  # XXX
-  var events = event.toSet
-  var x = trampoline(move record.c)
-  record.c = move x
+  if event.id in eq.registry:
+    let record = eq.registry[event.id]
+    var x = trampoline(move record.c)
+    record.c = move x
 
 template maybeInit(eq: var EventQueue): untyped =
   if eq.isNil:
@@ -370,12 +353,9 @@ proc pruneOneShots(eq: var EventQueueObj; events: var openArray[epoll_event];
   while i > 0:
     dec i
     let id = events[i].id
-    if id notin eq.registry:
-      raise Defect.newException "lost record"
-    else:
-      let record = eq.registry[id]
-      if OneShot in record.events:
-        eq.delRegistry record
+    let record = eq.registry[id]
+    if OneShot in record.events:
+      eq.delRegistry record
 
 proc pruneOneShots*(eq: EventQueue; events: var openArray[epoll_event];
                     quantity: cint) =
@@ -405,10 +385,8 @@ proc wait*(eq: var EventQueue): cint =
   result = wait(eq, events)
 
 proc run*(eq: EventQueue; events: var openArray[epoll_event]; quantity: cint) =
-  if quantity > events.len:
-    raise Defect.newException "insufficient event buffer size"
-  elif quantity > 0:
-    var i = quantity
+  if quantity > 0:
+    var i = min(events.len, quantity)
     while i > 0:
       dec i
       eq[].runEvent(events[i])  # XXX: temporary
@@ -421,6 +399,13 @@ proc register*(eq: EventQueue; fd: Fd; events: set[Event] = AllEvents): Id {.cps
   assert eq[].interest != invalidFd
   assert fd != invalidFd
   eq.suspend(fd, {Edge} + events)
+
+proc cancel*(eq: EventQueue; id: Id): bool {.discardable.} =
+  ## cancel the event with id `id`; false if the event was not found
+  assert not eq.isNil
+  result = id in eq[].registry
+  if result:
+    eq[].delRegistry eq[].registry[id]  # let it crash with KeyError
 
 proc sleep*(eq: EventQueue; timeout: float) {.cps: Continuation.} =
   ## sleep for `timeout` seconds
