@@ -26,8 +26,9 @@ when insideoutGratuitous:
 else:
   template debug*(args: varargs[untyped]) = discard
 
-import pkg/cps/spec
-import pkg/cps/normalizedast
+import pkg/cps
+from pkg/cps/spec import pragmaArgument
+from pkg/cps/normalizedast import NormNode
 
 proc coop*(a: sink Continuation): Continuation {.cpsMagic.} =
   ## yield to the dispatcher
