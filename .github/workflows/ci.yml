@@ -132,13 +132,17 @@ jobs:
         env:
           NIM: ${{ matrix.compiler.name }}
 
-      - name: Tests
+      - name: Tests: Locks
         shell: bash
         run: |
           balls --path="." --define:insideoutSafeMode=on \
                 --backend:c --panics:on \
                 --mm:arc --define:useMalloc \
                 --define:debug --define:release --define:danger
+
+      - name: Tests: Loony
+        shell: bash
+        run: |
           balls --path="." --define:insideoutSafeMode=off \
                 --backend:c --panics:on \
                 --mm:arc --define:useMalloc \
