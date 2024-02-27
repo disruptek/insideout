@@ -19,8 +19,6 @@ type
   Server = ref object of Continuation
   Job = ref object
 
-proc cooperate(c: Continuation): Continuation {.cpsMagic.} = c
-
 proc unblocking(jobs: Mailbox[Job]) {.cps: Server.} =
   ## non-blocking receive
   #debug "service began"
@@ -28,7 +26,6 @@ proc unblocking(jobs: Mailbox[Job]) {.cps: Server.} =
   while Received != jobs.tryRecv(job):
     if not jobs.waitForPoppable:
       break
-    cooperate()
   #debug "service ended"
 
 proc blocking(jobs: Mailbox[Job]) {.cps: Server.} =
@@ -37,7 +34,6 @@ proc blocking(jobs: Mailbox[Job]) {.cps: Server.} =
   while true:
     #debug "service waiting"
     var job = recv jobs
-    cooperate()
   #debug "service ended"
 
 const Unblocking = whelp unblocking
@@ -47,7 +43,7 @@ proc main() =
 
   block:
     ## non-blocking mailbox sniffer
-    notice "runtime"
+    info "runtime"
     let jobs = newMailbox[Job]()
     info "[runtime] spawn"
     var runtime = Unblocking.spawn(jobs)
@@ -56,7 +52,7 @@ proc main() =
     doAssert other == runtime
     #info "[runtime] pin"
     #pinToCpu(other, 0)
-    doAssert runtime.mailbox == jobs
+    #doAssert runtime.mailbox == jobs
     var job = Job()
     info "[runtime] send"
     while Delivered != jobs.trySend(job):

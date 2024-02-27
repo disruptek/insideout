@@ -49,7 +49,7 @@ proc oracle(box: Mailbox[Query]) {.cps: Oracle.} =
       discard trampoline(move query)
     elif not waitForPoppable(box):
       break
-    cooperate()
+    coop()
   info "oracle terminating"
 
 # define a service using a continuation bootstrap
@@ -82,7 +82,6 @@ proc application(home: Mailbox[Continuation]) {.cps: Continuation.} =
   notice "no more mail"
   info "application exit"
 
-import std/os
 proc main =
   block done:
     notice "init home mailbox"

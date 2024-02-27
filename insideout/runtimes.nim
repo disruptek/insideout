@@ -5,8 +5,9 @@ import std/posix
 import std/strutils
 
 import pkg/cps
-from pkg/cps/spec import cpsStackFrames
+from pkg/cps/spec import Callback
 
+import insideout/spec as iospec
 import insideout/futexes
 import insideout/atomic/flags
 import insideout/atomic/refs
@@ -14,43 +15,41 @@ export refs
 
 import insideout/mailboxes
 import insideout/threads
-#import insideout/eventqueue
+import insideout/eventqueue
 
-const
-  insideoutStackSize* {.intdefine.} = 16_384
-  insideoutRenameThread* {.booldefine.} = defined(linux)
+export coop
+
+const insideoutAggressiveDealloc {.booldefine.} = false
 
 type
-  SpawnError* = object of OSError
   RuntimeError* = object of OSError
-  Dispatcher* = proc(p: pointer): pointer {.noconv.}
-  Factory*[A, B] = proc(mailbox: Mailbox[B]) {.cps: A.}
+  SpawnError* = object of RuntimeError
 
   RuntimeFlag* {.size: 2.} = enum
     Halted     = 0    # 1 / 65536
     Frozen     = 1    # 2 / 131072
     Running    = 2    # 4 / 262144
+    Linked     = 3    # 8 / 524288
 
-  RuntimeObj[A, B] = object
+  RuntimeObj = object
     handle: PThread
+    parent: PThread
     flags: AtomicFlags32
-    #events: Fd
-    #signals: Fd
-    factory: Factory[A, B]
-    mailbox: Mailbox[B]
-    continuation: A
+    eq: EventQueue
+    signals: Fd
+    continuation: Continuation
     error: ref CatchableError
 
-  Runtime*[A, B] = AtomicRef[RuntimeObj[A, B]]
+  Runtime* = AtomicRef[RuntimeObj]
 
-const deadFlags = <<Halted or <<!{Frozen, Running}
+const deadFlags = <<Halted or <<!{Frozen, Running, Linked}
 const bootFlags = <<!{Halted, Frozen, Running}
 
-proc `=copy`*[A, B](runtime: var RuntimeObj[A, B]; other: RuntimeObj[A, B]) {.error.} =
+proc `=copy`*(runtime: var RuntimeObj; other: RuntimeObj) {.error.} =
   ## copies are denied
   discard
 
-proc state*[A, B](runtime: Runtime[A, B]): RuntimeFlag =
+proc state*(runtime: Runtime): RuntimeFlag =
   ## return the state of the runtime
   assert not runtime.isNil
   let flags = get runtime[].flags
@@ -64,7 +63,7 @@ proc state*[A, B](runtime: Runtime[A, B]): RuntimeFlag =
     raise Defect.newException "unexpected runtime flags: " & $flags
     Halted
 
-template withRunning[A, B](runtime: Runtime[A, B]; body: typed): untyped =
+template withRunning(runtime: Runtime; body: typed): untyped =
   ## execute body if the runtime is running
   assert not runtime.isNil
   let state = runtime.state
@@ -84,7 +83,7 @@ proc `$`(thread: PThread or SysThread): string =
 proc `$`(runtime: RuntimeObj): string =
   cast[int](addr runtime).toHex
 
-proc `$`*[A, B](runtime: Runtime[A, B]): string =
+proc `$`*(runtime: Runtime): string =
   assert not runtime.isNil
   result = "<run:"
   result.add $runtime[]
@@ -98,58 +97,57 @@ proc `==`*(a, b: Runtime): bool =
   assert not b.isNil
   a.address == b.address
 
-proc cancel[A, B](runtime: var RuntimeObj[A, B]): bool {.discardable.} =
+proc cancel(runtime: var RuntimeObj): bool {.discardable.} =
   ## cancel a runtime; true if successful
   result = 0 == pthread_cancel(runtime.handle)
 
-proc signal[A, B](runtime: var RuntimeObj[A, B]; sig: int): bool {.used.} =
+proc signal(runtime: var RuntimeObj; sig: int): bool {.used.} =
   ## send a signal to a runtime; true if successful
-  let flags = get runtime.flags
-  if flags && (<<!Halted + <<Running):  # FIXME: allow signals in teardown?
-    result = 0 == pthread_kill(runtime.handle, sig.cint)
+  0 == pthread_kill(runtime.handle, sig.cint)
 
-proc kill[A, B](runtime: var RuntimeObj[A, B]): bool {.used.} =
+proc kill(runtime: var RuntimeObj): bool {.used.} =
   ## kill a runtime; false if the runtime is not running
   signal(runtime, 9)
 
-proc waitForFlags[A, B](runtime: var RuntimeObj[A, B]; wants: uint32): bool {.raises: [FutexError].} =
+proc waitForFlags(runtime: var RuntimeObj; wants: uint32): bool {.raises: [RuntimeError].} =
   while true:
     var has = get runtime.flags
     result = 0 != (has and wants)
     if result:
       break
-    when insideoutSafeMode:
-      let e = checkWait waitMask(runtime.flags, has, wants)
-    else:
-      let e = checkWait waitMask(runtime.flags, has, wants, 5.0)
-    case e
-    of 0, EAGAIN:
+    let err =
+      try:
+        checkWait waitMask(runtime.flags, has, wants)
+      except FutexError as e:
+        raise RuntimeError.newException $e.name & ":" & e.msg
+    case err
+    of 0, EINTR, EAGAIN:
       discard
     of ETIMEDOUT:
-      break
+      raise RuntimeError.newException "timeout waiting for thread"
     else:
-      raise Defect.newException "unexpected futex error: " & $e
+      raise RuntimeError.newException "unexpected futex error: " & $err
 
-proc halt*[A, B](runtime: Runtime[A, B]): bool {.discardable.} =
+proc halt*(runtime: Runtime): bool {.discardable.} =
   ## ask the runtime to exit; true if the runtime wasn't already halted
   assert not runtime.isNil
   result = runtime[].flags.enable Halted
-  discard signal(runtime[], SIGINT)
+  if result:
+    checkWake wakeMask(runtime[].flags, <<Halted)
 
-proc join*[A, B](runtime: sink Runtime[A, B]) {.raises: [FutexError, RuntimeError].} =
+proc join*(runtime: sink Runtime) {.raises: [RuntimeError].} =
   ## block until the runtime has exited
   assert not runtime.isNil
-  #if runtime.owners > 1:
   if not waitForFlags(runtime[], <<!Running):
     raise RuntimeError.newException "runtime failed to exit"
 
-proc cancel*[A, B](runtime: Runtime[A, B]): bool {.discardable.} =
+proc cancel*(runtime: Runtime): bool {.discardable.} =
   ## cancel a runtime; true if successful.
   ## always succeeds if the runtime is not running.
   assert not runtime.isNil
   cancel runtime[]
 
-proc `=destroy`[A, B](runtime: var RuntimeObj[A, B]) =
+proc `=destroy`(runtime: var RuntimeObj) =
   # reset the flags so that the subsequent wake will
   # not be ignored for any reason
   put(runtime.flags, deadFlags)
@@ -157,7 +155,11 @@ proc `=destroy`[A, B](runtime: var RuntimeObj[A, B]) =
   # queued waiters in kernel space
   checkWake wake(runtime.flags)
   for key, value in runtime.fieldPairs:
-    when key != "flags":
+    when value is Fd:
+      close value
+    elif value is AtomicFlags32:
+      discard
+    else:
       reset value
 
 proc renderError(e: ref Exception; s = "crash;"): string =
@@ -171,43 +173,51 @@ proc renderError(e: ref Exception; s = "crash;"): string =
   result.add ": "
   result.add e.msg
 
-proc bounce*[T: Continuation](c: sink T): T =
-  var c: Continuation = move c
-  var fn = c.fn
-  result = T fn(move c)
-
 type
   ContinuationFn = proc (c: sink Continuation): Continuation {.nimcall.}
 
-proc deallocRuntime[A, B](runtime: pointer) {.noconv.} =
+proc bounce*[T: Continuation](c: sink T): T =
+  var c: Continuation = move c
+  var fn: ContinuationFn = c.fn
+  result = T fn(move c)
+
+proc deallocRuntime(runtime: pointer) {.noconv.} =
   ## called by the runtime to deallocate itself from its thread()
   # (we won't get another chance to properly decrement the rc on the runtime)
   block:
-    var runtime = cast[Runtime[A, B]](runtime)
+    var runtime = cast[Runtime](runtime)
     forget runtime
   when defined(gcOrc):
     {.warning: "insideout does not support orc memory management".}
     GC_runOrc()
 
-proc teardown[A, B](p: pointer) {.noconv.} =
+template exceptionHandler(e: ref Exception; s: static string): cint =
+  ## some exception-handling boilerplate
+  when compileOption"stackTrace":
+    writeStackTrace()
+  stdmsg().writeLine:
+    renderError(e, s)
+  if errno > 0: errno else: 1
+
+proc teardown(p: pointer) {.noconv.} =
   ## we receive a pointer to a runtime object and we perform any necessary
   ## cleanup; this is run during thread destruction
-  var runtime = cast[Runtime[A, B]](p)
+  mixin dealloc
+  var runtime = cast[Runtime](p)
   if runtime[].flags.enable Halted:
     checkWake wakeMask(runtime[].flags, <<Halted)
   try:
-    try:
-      reset runtime[].continuation
-    except CatchableError as e:
-      const cErrorMsg = "destroying " & $A & " continuation;"
-      stdmsg().writeLine:
-        renderError(e, cErrorMsg)
-    try:
-      reset runtime[].mailbox
-    except CatchableError as e:
-      const mErrorMsg = "discarding " & $B & " mailbox;"
-      stdmsg().writeLine:
-        renderError(e, mErrorMsg)
+    when insideoutAggressiveDealloc:
+      try:
+        runtime[].continuation = dealloc(runtime[].continuation, Continuation)
+      except CatchableError as e:
+        const cErrorMsg = "deallocating continuation;"
+        discard e.exceptionHandler cErrorMsg
+      try:
+        reset runtime[].continuation
+      except CatchableError as e:
+        const cErrorMsg = "destroying continuation;"
+        discard e.exceptionHandler cErrorMsg
   finally:
     put(runtime[].flags, <<!{Running, Frozen} or <<Halted)
     # wake all waiters on the flags in order to free any queued
@@ -222,114 +232,140 @@ template mayCancel(r: typed; body: typed): untyped {.used.} =
   finally:
     r = pthread_setcancelstate(PTHREAD_CANCEL_DISABLE.cint, addr prior)
 
-proc dispatcher[A, B](runtime: sink Runtime[A, B]): cint =
+const emptyTimeSpec = TimeSpec(tv_sec: 0.Time, tv_nsec: 0.clong)
+
+proc process(eq: var EventQueue; runtime: var RuntimeObj): cint =
+  ## process any events or signals in each iteration of the event loop
+  var events {.noinit.}: array[1, epoll_event]
+  try:
+    let ready = eq.wait(events, timeout = addr emptyTimeSpec, nil)
+    if ready == -1:
+      result = errno
+    else:
+      eq.run(events, ready)
+      eq.pruneOneShots(events, ready)
+  except CatchableError as e:
+    const pErrorMsg = "event handler crash;"
+    result = e.exceptionHandler pErrorMsg
+
+proc loop(eq: var EventQueue; runtime: var RuntimeObj): cint =
+  ## the main event loop which operates the runtime
+  const pleaseHalt = high int
+  var phase: int
+
+  template nextIf(err: untyped): untyped {.dirty.} =
+    result = err
+    if result == 0:
+      inc phase
+    else:
+      phase = pleaseHalt
+
+  var flags: uint32
+  while true:
+    # process any events or signals
+    result = eq.process(runtime)
+
+    # check the state every iteration
+    flags = get runtime.flags
+
+    # see if we need to shutdown the loop...
+    if result != 0 or flags && <<Halted:
+      phase = pleaseHalt
+
+    case phase
+    of 0: # boot the continuation if we haven't already done so
+      # check for a bogus/missing factory composition
+      if runtime.continuation.isNil:
+        runtime.error = ValueError.newException "nil continuation"
+        nextIf 1
+      else:
+        inc phase
+    of 1: # rename the thread to indicate that we're running
+      when insideoutRenameThread:
+        nextIf pthread_setname_np(runtime.handle, "io: running")
+      else:
+        inc phase
+    of 2: # if the runtime is frozen, we need to wait for it to thaw
+      if flags && <<Frozen:
+        phase = 4
+      else:
+        inc phase
+    of 3: # we're running a continuation normally
+      try:
+        var fn: ContinuationFn = runtime.continuation.fn
+
+        # NOTE: if the thread is cancelled or the continuation
+        # crashes here, we need to be able to free its environment
+        # from within teardown()
+
+        {.push objChecks: off.}                    # old nim
+        var temporary: Continuation = fn(runtime.continuation)
+        runtime.continuation = temporary           # nimskull
+        {.pop.}
+
+        # verbosity due to sanitizers
+        if not runtime.continuation.isNil and not runtime.continuation.fn.isNil:
+          dec phase  # check to see if we've been frozen
+        else:
+          break      # normal termination of the event loop
+      except CatchableError as e:
+        result = exceptionHandler(e, "dispatcher crash;")
+        phase = pleaseHalt
+    of 4: # we're entering the frozen state
+      when insideoutRenameThread:
+        nextIf pthread_setname_np(runtime.handle, "io: frozen")
+      else:
+        inc phase
+    of 5: # the frozen state, where we wait for the runtime to thaw
+      case checkWait waitMask(runtime.flags, flags, <<Halted + <<!Frozen)
+      of EINTR:
+        discard
+      of 0, EAGAIN:
+        let flags = get runtime.flags
+        if flags && <<Halted:      # halted while frozen
+          phase = high int
+        elif flags && <<Frozen:    # spurious wakeup
+          phase = 5                # loop and don't rename thread
+        else:                      # unfrozen
+          phase = 0
+      of ETIMEDOUT:
+        runtime.error = RuntimeError.newException "timeout waiting to unfreeze"
+        nextIf errno
+      else:
+        runtime.error = RuntimeError.newException $strerror(errno)
+        nextIf errno
+    else: # we're crashing out of the loop
+      when insideoutRenameThread:
+        discard pthread_setname_np(runtime.handle, "io: halted")
+      if result == 0:
+        result = 1
+      break
+
+proc dispatcher(runtime: sink Runtime): cint =
   ## blocking dispatcher for a runtime
-  pthread_cleanup_push(teardown[A, B], runtime.address)
-  var prior: cint
+  pthread_cleanup_push(teardown, runtime.address)
 
   # now that we can safely handle a cancellation, release the thread creator
   if runtime[].flags.enable Running:
     checkWake wakeMask(runtime[].flags, <<Running)
 
   # enable cancellation or die trying
-  result = pthread_setcancelstate(PTHREAD_CANCEL_ENABLE.cint, addr prior)
+  result = pthread_setcancelstate(PTHREAD_CANCEL_ENABLE.cint, nil)
   if result != 0:
     stdmsg().writeLine:
       renderError(Defect.newException "unable to enable cancellation")
-    pthread_exit(addr result)
-
-  var phase = 0
-  template nextIf(err: untyped): untyped {.dirty.} =
-    result = err
-    if result == 0:
-      inc phase
-  var flags: uint32
-  while true:
-    if result == 0:
-      flags = get runtime[].flags
-      if flags && <<Halted:
-        phase = high int
-        result = 1
-    else:
-      if runtime[].flags.enable Halted:
-        checkWake wakeMask(runtime[].flags, <<Halted)
-      phase = high int
-    case phase
-    of 0:
-      # boot the continuation if we haven't already done so
-      if runtime[].continuation.isNil:
-        runtime[].continuation = runtime[].factory.call(runtime[].mailbox)
-      # check for a bogus/missing factory composition
-      if runtime[].continuation.isNil:
-        runtime[].error = ValueError.newException "nil continuation"
-        nextIf 1
-      else:
-        inc phase
-    of 1:
-      when insideoutRenameThread:
-        nextIf pthread_setname_np(runtime[].handle, "io: running")
-      else:
-        inc phase
-    of 2:
-      if flags && <<Frozen:
-        phase = 4
-      else:
-        inc phase
-    of 3:
-      try:
-        var fn: ContinuationFn = runtime[].continuation.fn
-
-        # NOTE: if the thread is cancelled or the continuation
-        # crashes here, we need to be able to free its environment
-        # from within teardown()
-
-        var temporary: Continuation = fn(runtime[].continuation)
-        runtime[].continuation = A temporary
-
-        if not runtime[].continuation.isNil and not runtime[].continuation.fn.isNil:
-          dec phase  # check to see if we've been frozen
-        else:
-          break      # normal termination
-      except CatchableError as e:
-        when compileOption"stackTrace":
-          writeStackTrace()
-        const cErrorMsg = $A & " dispatcher crash;"
-        stdmsg().writeLine:
-          renderError(e, cErrorMsg)
-        nextIf errno  # either way, we're done
-    of 4:
-      when insideoutRenameThread:
-        nextIf pthread_setname_np(runtime[].handle, "io: frozen")
-      else:
-        inc phase
-    of 5:
-      try:
-        case checkWait waitMask(runtime[].flags, flags, <<Halted + <<!Frozen)
-        of EINTR, EAGAIN:
-          discard
-        of ETIMEDOUT:
-          raise FutexError.newException "timeout waiting to unfreeze"
-        else:
-          let flags = get runtime[].flags
-          if flags && <<Halted:      # halted while frozen
-            phase = high int
-          elif flags && <<Frozen:    # spurious wakeup
-            phase = 5                # loop and don't rename thread
-          else:                      # unfrozen
-            phase = 0
-      except FutexError:
-        runtime[].error = FutexError.newException $strerror(errno)
-        nextIf errno
-    else:
-      when insideoutRenameThread:
-        discard pthread_setname_np(runtime[].handle, "io: halted")
-      result = 1
-      break
+  else:
+    withNewEventQueue eq:
+      # this right here, is where the rubber meets the road
+      when false:
+        if runtime[].signals != invalidFd:
+          eq.register(runtime[].signals, {Read})
+      result = loop(eq, runtime[])
 
   pthread_exit(addr result)
   pthread_cleanup_pop(0)
 
-proc thread[A, B](p: pointer): pointer {.noconv.} =
+proc thread(p: pointer): pointer {.noconv.} =
   ## our entrance into the new thread; we receive a RuntimeObj
   var prior: cint
   if 0 != pthread_setcancelstate(PTHREAD_CANCEL_DISABLE.cint, addr prior):
@@ -339,9 +375,9 @@ proc thread[A, B](p: pointer): pointer {.noconv.} =
   elif 0 != pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS.cint, addr prior):
     raise Defect.newException "unable to set cancel type on a new thread"
   else:
-    var runtime = cast[Runtime[A, B]](p)
+    var runtime = cast[Runtime](p)
     # push the dealloc here because it's more correct
-    pthread_cleanup_push(deallocRuntime[A, B], runtime.address)
+    pthread_cleanup_push(deallocRuntime, runtime.address)
     # drop into the dispatcher (and never come back)
     discard dispatcher(move runtime)
     pthread_cleanup_pop(0)
@@ -351,90 +387,93 @@ template spawnCheck(err: cint): untyped =
   if e != 0:
     raise SpawnError.newException: $strerror(e)
 
-proc boot[A, B](runtime: var RuntimeObj[A, B];
-                size = insideoutStackSize) =
+proc initSignals(runtime: var RuntimeObj): Sigset =
+  let flags = SFD_NONBLOCK or SFD_CLOEXEC
+  spawnCheck sigfillset(result)
+  runtime.signals = signalfd(invalidFd, addr result, flags)
+  if invalidFd == runtime.signals:
+    raise SpawnError.newException: $strerror(errno)
+
+proc boot(runtime: var RuntimeObj; flags = <<!Linked;
+          size = insideoutStackSize) {.raises: [SpawnError].} =
+  ## perform remaining setup of the runtime and boot the thread
+  let mask = initSignals runtime
+  let flags = flags or bootFlags
   var attr {.noinit.}: PThreadAttr
   spawnCheck pthread_attr_init(addr attr)
-  spawnCheck pthread_attr_setdetachstate(addr attr, PTHREAD_CREATE_DETACHED.cint)
+  spawnCheck pthread_attr_setsigmask_np(addr attr, addr mask)
+  spawnCheck pthread_attr_setdetachstate(addr attr, PTHREAD_CREATE_DETACHED)
   spawnCheck pthread_attr_setstacksize(addr attr, size.cint)
-
-  # i guess this is really happening...
-  put(runtime.flags, bootFlags)
-  spawnCheck pthread_create(addr runtime.handle, addr attr, thread[A, B],
-                            cast[pointer](addr runtime))
+  put(runtime.flags, flags)
+  runtime.parent = pthread_self()
+  try:
+    spawnCheck pthread_create(addr runtime.handle, addr attr, thread,
+                              cast[pointer](addr runtime))
+  except Exception as e:
+    raise SpawnError.newException $e.name & ": " & e.msg
   spawnCheck pthread_attr_destroy(addr attr)
-  while get(runtime.flags) == bootFlags:
+  while get(runtime.flags) == flags:
     # if the flags changed at all, the thread launch is successful
-    let e = checkWait wait(runtime.flags, bootFlags)
-    case e
+    var err =
+      try:
+        checkWait wait(runtime.flags, flags)
+      except FutexError as e:
+        raise SpawnError.newException e.msg
+        errno
+    case err
     of 0, EINTR, EAGAIN:
       discard
     of ETIMEDOUT:
-      raise Defect.newException "timeout in boot"
+      raise SpawnError.newException "timeout waiting for thread to boot"
     else:
-      raise Defect.newException "new thread failed to start"
+      raise SpawnError.newException "unexpected futex errno: " & $err
 
-proc spawn[A, void](runtime: var RuntimeObj[A, void]; continuation: sink A) =
-  ## add compute to mailbox
-  runtime.continuation = continuation
-  runtime.mailbox = newMailbox[void]()
-  boot runtime
-
-proc spawn[A, B](runtime: var RuntimeObj[A, B]; factory: Factory[A, B]; mailbox: Mailbox[B]) =
-  ## add compute to mailbox
-  runtime.factory = factory
-  runtime.mailbox = mailbox
-  #assertReady runtime
-  #template assertReady(runtime: RuntimeObj): untyped =
-  when not defined(danger):  # if this isn't dangerous, i don't know what is
-    if runtime.mailbox.isNil:
-      raise ValueError.newException "nil mailbox"
-    elif runtime.factory.fn.isNil:
-      raise ValueError.newException "nil factory function"
-  boot runtime
-
-proc spawn*[A, B](factory: Factory[A, B]; mailbox: Mailbox[B]): Runtime[A, B] =
-  ## create compute from a factory and mailbox
+proc spawn*(continuation: sink Continuation): Runtime =
+  ## run the continuation in another thread
   new result
-  spawn(result[], factory, mailbox)
+  result[].continuation = continuation
+  boot(result[], flags = <<!Linked)
 
-proc clone*[A, B](runtime: Runtime[A, B]): Runtime[A, B] =
-  ## clone a `runtime` to perform the same work
-  assert not runtime.isNil
+proc link*(continuation: sink Continuation): Runtime =
+  ## run the continuation in another thread;
+  ## a failure in the child will propogate to the parent
   new result
-  spawn(result[], runtime[].factory, runtime[].mailbox)
+  result[].continuation = continuation
+  boot(result[], flags = <<Linked)
 
-proc spawn*[A](continuation: sink A): Runtime[A, Mailbox[void]] =
-  new result
-  spawn[A, Mailbox[void]](result[], continuation)
+template spawn*(factory: Callback; mailbox: Mailbox): Runtime =
+  spawn factory.call(mailbox)
 
-proc factory*[A, B](runtime: Runtime[A, B]): Factory[A, B] {.deprecated.} =
-  ## recover the factory from the runtime
-  assert not runtime.isNil
-  runtime[].factory
-
-proc mailbox*[A, B](runtime: Runtime[A, B]): Mailbox[B] {.deprecated.} =
-  ## recover the mailbox from the runtime
-  assert not runtime.isNil
-  runtime[].mailbox
-
-proc pinToCpu*[A, B](runtime: Runtime[A, B]; cpu: Natural) =
+proc pinToCpu*(runtime: Runtime; cpu: Natural) =
   ## assign a runtime to a specific cpu index
   withRunning runtime:
     pinToCpu(runtime[].handle, cpu)
 
-proc handle*[A, B](runtime: Runtime[A, B]): PThread =
+proc handle*(runtime: Runtime): PThread =
   withRunning runtime:
     runtime[].handle
 
-proc pause*[A, B](runtime: Runtime[A, B]) =
+proc pause*(runtime: Runtime) =
   ## pause a running runtime
   if runtime[].flags.enable Frozen:
     checkWake wakeMask(runtime[].flags, <<Frozen)
 
-proc resume*[A, B](runtime: Runtime[A, B]) =
+proc resume*(runtime: Runtime) =
   ## resume a running runtime
   if runtime[].flags.disable Frozen:
     checkWake wakeMask(runtime[].flags, <<!Frozen)
 
-template stop*[A, B](runtime: Runtime[A, B]) {.deprecated.} = halt runtime
+template stop*(runtime: Runtime) {.deprecated.} = halt runtime
+
+proc signal*(runtime: Runtime; sig: int): bool {.discardable.} =
+  ## send a signal to a runtime; true if successful
+  signal(runtime[], sig)
+
+proc eject*(runtime: Runtime): Continuation {.discardable.} =
+  ## remove the continuation from a halted runtime
+  let flags = get(runtime[].flags, moAcquire)
+  if flags && <<Halted + <<!Running:
+    result = move runtime[].continuation
+  else:
+    raise ValueError.newException:
+      "runtime must be halted and not running to eject continuation"

@@ -9,26 +9,23 @@ var goodbyes: Atomic[int]
 
 const briefly = 5  # for valgrind
 
-proc cooperate(c: Continuation): Continuation {.cpsMagic.} =
-  c
-
 proc greetThreadId(source: int) {.cps: Continuation.} =
   ## say hello!
-  cooperate()
+  coop()
   echo "hello to thread ", source, " from thread ", getThreadId()
   discard fetchAdd(hellos, 1)
   sleep briefly
-  cooperate()
+  coop()
   echo "goodbye from thread ", getThreadId()
   discard fetchAdd(goodbyes, 1)
 
 proc greetEveryone() {.cps: Continuation.} =
   ## say hello!
-  cooperate()
+  coop()
   echo "hello to everyone from thread ", getThreadId()
   discard fetchAdd(hellos, 1)
   sleep briefly
-  cooperate()
+  coop()
   echo "goodbye from thread ", getThreadId()
   discard fetchAdd(goodbyes, 1)
 

@@ -21,23 +21,38 @@ let N =
   else:
     100_000
 
-proc foo(a, b: Mailbox[ref int]; i: int) {.cps: Continuation.} =
-  #echo "hello ", i
-  while true:
-    var i: ref int
-    var r = a.tryRecv(i)
-    case r
-    of Received:
-      #echo "foo ", i[], " a.len: ", a.len, " b.len: ", b.len
-      while Delivered != b.trySend(i):
-        #echo "send fail ", i[]
-        discard
-    else:
-      #echo "a: ", r, " a.len: ", a.len
-      if not a.waitForPoppable():
-        #echo "failed out of foos"
-        break
-  #echo "goodbye ", i
+when false:
+  import std/strutils
+  template debug*(args: varargs[string, `$`]) =
+    stdmsg().writeLine $getThreadId() & " " & args.join("")
+else:
+  template debug*(args: varargs[untyped]) = discard
+
+proc foo(a, b: Mailbox[ref int]; j: int) {.cps: Continuation.} =
+  debug "hello ", j
+  block exit:
+    while true:
+      var i: ref int
+      var r = a.tryRecv(i)
+      case r
+      of Received:
+        debug "foo ", i[], " a.len: ", a.len, " b.len: ", b.len
+        while true:
+          case b.trySend(i):
+          of Delivered:
+            break
+          else:
+            debug "send fail ", i[]
+            if not b.waitForPushable:
+              debug "failed ", j, " out of send"
+              break exit
+      else:
+        debug "a: ", r, " a.len: ", a.len
+        if not a.waitForPoppable():
+          debug "failed ", j, " out of recv"
+          break
+      coop()
+  debug "goodbye ", j
 
 proc main(n: int) =
   # where to do work
@@ -46,24 +61,24 @@ proc main(n: int) =
   var a = newMailbox[ref int](n.uint32)    # input queue limited to thread count
   var b = newMailbox[ref int](N.uint32)    # output queue limited to message count
   # start the workers
-  var pool = newPool(ContinuationWaiter, remote, initialSize = n)  # thread count
+  var pool = newPool(ContinuationRunner, remote, initialSize = n)  # thread count
   # send the workers the work
   for i in 1..n:
     var c = whelp foo(a, b, i)
     while Delivered != remote.trySend(c):
       discard
-  #echo "done continuations"
+  debug "done continuations"
   closeWrite remote
   # send the messages
   for i in 1..N:
     var x: ref int
     new x
     x[] = i
-    #echo "send ", i, " a.len: ", a.len
+    debug "send ", i, " a.len: ", a.len
     while Delivered != a.trySend(x):
       discard
   # there will be no more messages
-  #echo "done sends"
+  debug "done sends"
   closeWrite a
   var z = N
   while z > 0:
@@ -71,17 +86,17 @@ proc main(n: int) =
     var r = b.tryRecv(x)
     case r
     of Received:
-      #echo "recv ", x[], " ", z, " remain"
+      debug "recv ", x[], " ", z, " remain"
       dec z
       discard
     elif not b.waitForPoppable():
-      echo "failed out of receives"
+      debug "failed out of receives"
       break
-  echo "done ", N-z, " receives across ", n, " threads"
+  debug "done ", N-z, " receives across ", n, " threads"
   closeWrite b
   # confirm that we received all the messages
   if z != 0:
-    echo "missing ", z, " messages"
+    debug "missing ", z, " messages"
     quit 1
   # confirm that we didn't receive extra messages
   var x: ref int
@@ -91,19 +106,17 @@ proc main(n: int) =
     case r
     of Empty: break
     of Received:
-      echo "extra ", x[]
+      debug "extra ", x[]
       inc e
     else:
-      echo r
+      debug r
   if e != 0:
-    echo "received ", e, " extra messages"
+    debug "received ", e, " extra messages"
     quit e
-  #echo "close receive"
-  closeRead b
-  #echo "close send"
+  debug "close send"
   closeRead a
-  #echo "halt pool"
-  halt pool
+  debug "close receive"
+  closeRead b
 
 for n in 1..M:
   main(n)

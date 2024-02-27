@@ -6,8 +6,12 @@
 # at your option. This file may not be copied, modified, or distributed except according to those terms.
 
 import std/atomics
-import std/math
 import std/posix
+
+import insideout/times
+
+const
+  insideoutMaskFree* {.booldefine.} = true
 
 type
   FutexError* = object of OSError
@@ -44,22 +48,6 @@ proc sysFutex(uaddr: pointer; futex_op: cint; val: uint32;
   assert val != 0
   result = syscall(NR_Futex, uaddr, futex_op, val, timeout, uaddr2, val3)
 
-proc getTimeSpec*(clock: ClockId): TimeSpec =
-  if 0 != clock_gettime(clock, result):
-    raise FutexError.newException "clock_gettime() failed"
-
-proc toTimeSpec(timeout: float): TimeSpec =
-  assert timeout >= 0.0
-  result.tv_sec = Time timeout.floor
-  result.tv_nsec = clong((timeout - result.tv_sec.float) * 1_000_000_000)
-
-proc `+`*(a, b: TimeSpec): TimeSpec =
-  result.tv_sec = Time(a.tv_sec.clong + b.tv_sec.clong)
-  result.tv_nsec = a.tv_nsec + b.tv_nsec
-  if result.tv_nsec >= 1_000_000_000:
-    result.tv_sec = Time(result.tv_sec.clong + 1)
-    result.tv_nsec -= 1_000_000_000
-
 proc wait*[T](monitor: var Atomic[T]; compare: T): cint =
   ## Suspend a thread if the value of `monitor` is the same as `compare`.
   result = sysFutex(addr monitor, WaitPrivate, cast[uint32](compare))
@@ -76,19 +64,29 @@ proc waitMask*[T](monitor: var Atomic[T]; compare: T; mask: uint32): cint =
   if (mask and cast[uint32](compare)) != 0:
     raise FutexError.newException "mask and compare overlap"
   else:
-    result = sysFutex(addr monitor, WaitBitsPrivate,
-                      cast[uint32](compare), val3 = mask)
+    when insideoutMaskFree:
+      result = wait(monitor, compare)
+    else:
+      result = sysFutex(addr monitor, WaitBitsPrivate,
+                        cast[uint32](compare), val3 = mask)
 
 proc waitMask*[T](monitor: var Atomic[T]; compare: T; mask: uint32;
                   timeout: float): cint =
   ## Suspend a thread until any of `mask` bits are set;
   ## resume after `timeout` seconds.
-  if (mask and cast[uint32](compare)) != 0:
-    raise FutexError.newException "mask and compare overlap"
+  when insideoutMaskFree:
+    result = wait(monitor, compare, timeout)
   else:
-    var tm = getTimeSpec(CLOCK_MONOTONIC) + timeout.toTimeSpec
-    result = sysFutex(addr monitor, WaitBitsPrivate, cast[uint32](compare),
-                      timeout = addr tm, val3 = mask)
+    if (mask and cast[uint32](compare)) != 0:
+      raise FutexError.newException "mask and compare overlap"
+    else:
+      var tm: TimeSpec
+      try:
+        vm = getTimeSpec(CLOCK_MONOTONIC) + timeout.toTimeSpec
+      except OSError as e:
+        raise FutexError.newException $e.name & ":" & e.msg
+      result = sysFutex(addr monitor, WaitBitsPrivate, cast[uint32](compare),
+                        timeout = addr tm, val3 = mask)
 
 proc wake*[T](monitor: var Atomic[T]; count = high(uint32)): cint {.discardable.} =
   ## Wake as many as `count` threads from the same process.
@@ -101,10 +99,13 @@ proc wakeMask*[T](monitor: var Atomic[T]; mask: uint32; count = high(uint32)): c
   ## which are all waiting on any set bit in `mask`.
   # Returns the number of actually woken threads
   # or a Posix error code (if negative).
-  if mask == 0:
-    raise FutexError.newException "missing 32-bit mask"
+  when insideoutMaskFree:
+    wake(monitor, count = count)
   else:
-    result = sysFutex(addr monitor, WakeBitsPrivate, count, val3 = mask)
+    if mask == 0:
+      raise FutexError.newException "missing 32-bit mask"
+    else:
+      result = sysFutex(addr monitor, WakeBitsPrivate, count, val3 = mask)
 
 proc checkWait*(err: cint): cint {.discardable.} =
   if -1 == err:
