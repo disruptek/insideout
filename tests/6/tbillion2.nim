@@ -44,11 +44,10 @@ proc attempt(N: Positive; cores: int = countProcessors()) =
       #assert queue is AtomicRef[MailboxObj[Continuation]]
       assert queue is Mailbox[Continuation]
       pause queue
-      # false branches error on nimskull but work on old nim
-      when false:
+      when true:
         # nimskull says Error: type mismatch: got <AtomicRef>
         pool.add: spawn(ContinuationWaiter, queue)
-      elif false:
+      elif true:
         # nimskull says Error: type mismatch: got <AtomicRef>
         pool.add: ContinuationWaiter.call(queue)
       elif true:
