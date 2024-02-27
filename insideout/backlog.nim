@@ -161,8 +161,6 @@ proc reader(queue: Mailbox[LogMessage]) {.cps: Continuation.} =
 
   discard close fd
 
-const QueueReader = whelp reader
-
 # instantiate the log buffer
 var queue = newMailbox[LogMessage](backlogBuffer)
 
@@ -181,9 +179,9 @@ proc log*(level: Level; args: varargs[string, `$`]) {.raises: [].} =
 log(lvlNone, "program began")
 
 # instantiate the reader
-var runtime: Runtime[Continuation, LogMessage]
+var runtime: Runtime
 withLock L:
-  runtime = spawn(QueueReader, queue)
+  runtime = spawn: whelp reader(queue)
   wait(C, L)
 # the reader is running
 

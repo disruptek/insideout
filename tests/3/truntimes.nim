@@ -52,7 +52,7 @@ proc main() =
     doAssert other == runtime
     #info "[runtime] pin"
     #pinToCpu(other, 0)
-    doAssert runtime.mailbox == jobs
+    #doAssert runtime.mailbox == jobs
     var job = Job()
     info "[runtime] send"
     while Delivered != jobs.trySend(job):

@@ -47,13 +47,13 @@ proc destroy(c: var Either) =
       if c.volume.isNil:
         raise Defect.newException "dealloc on uninit continuation"
       else:
-        discard fetchAdd(memops, 1)
+        discard fetchSub(memops, 1)
         reset c.volume
     elif c is Speaker:
       if c.frequency.isNil:
         raise Defect.newException "dealloc on uninit continuation"
       else:
-        discard fetchAdd(memops, 1)
+        discard fetchSub(memops, 1)
         reset c.frequency
     c = nil
 
@@ -64,6 +64,7 @@ proc alloc[T: Amplifier](U: typedesc[T]; E: typedesc): E =
 proc dealloc[T: Amplifier](c: sink T; E: typedesc[T]): E =
   destroy c
   c = nil
+  discard fetchSub(memops, 1)
 
 proc alloc(U: typedesc[Speaker]; E: typedesc): E =
   discard fetchAdd(memops, 1)
@@ -72,8 +73,16 @@ proc alloc(U: typedesc[Speaker]; E: typedesc): E =
 proc dealloc[T: Speaker](c: sink T; E: typedesc[T]): E =
   destroy c
   c = nil
+  discard fetchSub(memops, 1)
+
+proc setFrequency(c: sink Speaker; freq: float): Speaker {.cpsMagic.} =
+  discard fetchAdd(memops, 1)
+  new c.frequency
+  c.frequency[] = freq
+  c
 
 proc setVolume(c: sink Amplifier; vol: int): Amplifier {.cpsMagic.} =
+  discard fetchAdd(memops, 1)
   new c.volume
   c.volume[] = vol
   c
@@ -89,11 +98,6 @@ proc server(jobs: Mailbox[Speaker]) {.cps: Amplifier.} =
   if not job.isNil:
     echo "vol: ", getVolume(), " freq: ", job.frequency[]
     job = dealloc(job, Speaker)
-
-proc setFrequency(c: sink Speaker; freq: float): Speaker {.cpsMagic.} =
-  new c.frequency
-  c.frequency[] = freq
-  c
 
 proc sing(freq: float; message: string) {.cps: Speaker.} =
   setFrequency freq
@@ -119,6 +123,8 @@ proc main =
   c = trampoline c
   c = dealloc(Amplifier c, server{cpsEnvironment})
 
+  doAssert memops.load == 0
+
   # 3
   queue.send:
     whelp sing(5.3, "hello, world!")
@@ -126,15 +132,24 @@ proc main =
   # 4
   server(queue)
 
+  doAssert memops.load == 0
+
   # 5
   queue.send:
     whelp sing(8.3, "hello, world!")
 
   # 6
-  var service = spawn(Factory, queue)
+  var service = spawn: whelp server(queue)
   join service
 
-  doAssert memops.load == 6*2
+  # we haven't deallocated the server continuation yet
+  doAssert memops.load == 2, "expected two missing deallocations"
+
+  # remove the continuation from the runtime and dealloc it
+  c = server{cpsEnvironment} eject(service)
+  discard dealloc(Amplifier c, server{cpsEnvironment})
+
+  doAssert memops.load == 0, "expected two fewer deallocations"
 
 for _ in 1..N:
   main()

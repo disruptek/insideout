@@ -19,7 +19,7 @@ proc sleep*(timeout: float) {.cps: Continuation.} =
       break
 
 template makeHalter*[A, B](): untyped =
-  proc halter(runtime: Runtime[A, B]; timeout: float) {.cps: Continuation.} =
+  proc halter(runtime: Runtime; timeout: float) {.cps: Continuation.} =
     sleep timeout
     halt runtime
     signal(runtime, SIGINT)

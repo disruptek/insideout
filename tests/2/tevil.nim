@@ -16,6 +16,7 @@
 
 import std/atomics
 import std/os
+import std/posix
 
 import pkg/cps
 
@@ -29,21 +30,19 @@ let N =
   else:
     10_000
 
-proc spinning(jobs: Mailbox[void]) {.cps: Continuation.} =
+proc spinning() {.cps: Continuation.} =
   while true:
     coop()
 
-proc quitting(jobs: Mailbox[void]) {.cps: Continuation.} =
+proc quitting() {.cps: Continuation.} =
   discard
 
 proc main() =
 
   block:
     ## dig them spinners
-    #notice "runtime"
-    let none = newMailbox[void]()
-    #info "[runtime] spawn"
-    var runtime = spawn: whelp spinning(none)
+    #notice "[runtime] spawn"
+    var runtime = spawn: whelp spinning()
     #info "[runtime] halt"
     halt runtime
     #info "[runtime] join"
@@ -52,11 +51,8 @@ proc main() =
 
   block:
     ## dig them quitters
-    const Quitting = whelp quitting
-    #notice "runtime"
-    let none = newMailbox[void]()
-    #info "[runtime] spawn"
-    var runtime = Quitting.spawn(none)
+    #notice "[runtime] spawn"
+    var runtime = spawn: whelp quitting()
     #info "[runtime] halt"
     halt runtime
     #info "[runtime] join"

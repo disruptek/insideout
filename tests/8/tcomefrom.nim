@@ -51,7 +51,7 @@ const SmartService = whelp oracle
 proc application(): int {.cps: Continuation.} =
   # create a child service
   var mail = newMailbox[Query]()
-  var pool = newPool[Oracle, Query](SmartService, mail, 1)
+  var pool = newPool(SmartService, mail, 1)
   let home = getThreadId()
 
   # submit some questions, etc.

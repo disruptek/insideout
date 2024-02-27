@@ -63,7 +63,7 @@ suite "runtimes + mailboxes + pools":
       doAssert pool.count == N
       join pool
       doAssert pool.count == N
-      empty pool
+      clear pool
       doAssert pool.count == 0
     main()
 
