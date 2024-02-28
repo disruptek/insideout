@@ -75,7 +75,7 @@ jobs:
       - name: Nimskull
         id: nimskull
         if: matrix.compiler.name == 'nimskull'
-        uses: alaviss/setup-nimskull@f6e8ade8ac51191024616216e5da0ee968d9da48
+        uses: alaviss/setup-nimskull@1c9eccd388e5151c61e36a6a6eb5964032a2e594
         with:
           nimskull-version: ${{ matrix.compiler.version }}
 
