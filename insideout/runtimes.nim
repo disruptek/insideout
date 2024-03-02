@@ -5,7 +5,6 @@ import std/posix
 import std/strutils
 
 import pkg/cps
-from pkg/cps/spec import Callback
 
 import insideout/spec as iospec
 import insideout/futexes
@@ -35,7 +34,6 @@ type
     handle: PThread
     parent: PThread
     flags: AtomicFlags32
-    eq: EventQueue
     signals: Fd
     continuation: Continuation
     error: ref CatchableError
@@ -263,7 +261,8 @@ proc loop(eq: var EventQueue; runtime: var RuntimeObj): cint =
   var flags: uint32
   while true:
     # process any events or signals
-    result = eq.process(runtime)
+    if not eq.isNil:
+      result = eq.process(runtime)
 
     # check the state every iteration
     flags = get runtime.flags
@@ -355,11 +354,15 @@ proc dispatcher(runtime: sink Runtime): cint =
     stdmsg().writeLine:
       renderError(Defect.newException "unable to enable cancellation")
   else:
-    withNewEventQueue eq:
-      # this right here, is where the rubber meets the road
-      when false:
-        if runtime[].signals != invalidFd:
-          eq.register(runtime[].signals, {Read})
+    var eq: EventQueue
+    when false:
+      withNewEventQueue eq:
+        # this right here, is where the rubber meets the road
+        when false:
+          if runtime[].signals != invalidFd:
+            eq.register(runtime[].signals, {Read})
+        result = loop(eq, runtime[])
+    else:
       result = loop(eq, runtime[])
 
   pthread_exit(addr result)

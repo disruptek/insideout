@@ -4,7 +4,6 @@ import std/lists
 import std/rlocks
 
 import pkg/cps
-from pkg/cps/spec import Callback
 
 import insideout/spec as iospec
 import insideout/runtimes
