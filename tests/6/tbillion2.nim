@@ -40,22 +40,11 @@ proc attempt(N: Positive; cores: int = countProcessors()) =
     var fillers = newPool(ContinuationRunner, fills, initialSize = cores)
   block:
     var pool = newPool(ContinuationWaiter)
-    for queue in queues.items:  # seq[Mailbox[Continuation]]
-      #assert queue is AtomicRef[MailboxObj[Continuation]]
-      assert queue is Mailbox[Continuation]
-      pause queue
-      when true:
-        # nimskull says Error: type mismatch: got <AtomicRef>
-        pool.add: spawn(ContinuationWaiter, queue)
-      elif true:
-        # nimskull says Error: type mismatch: got <AtomicRef>
-        pool.add: ContinuationWaiter.call(queue)
-      elif true:
-        # nimskull likes this one
-        pool.add: spawn(ContinuationWaiter, Mailbox[Continuation] queue)
-      elif true:
-        # nimskull likes this one, too
-        pool.add: ContinuationWaiter.call(Mailbox[Continuation] queue)
+    var i = queues.high
+    while i >= 0:
+      pause queues[i]
+      pool.add: spawn(ContinuationWaiter, queues[i])
+      dec i
     info "running ", N, " work items"
     let now = getTime()
     for queue in queues.mitems:
