@@ -8,6 +8,7 @@ import std/times
 import pkg/cps
 
 import insideout
+import insideout/coz
 import insideout/backlog
 
 let N =
@@ -17,13 +18,15 @@ let N =
     100_000_000
 
 proc work() {.cps: Continuation.} =
+  progress "work"
   discard
 
 proc filler(queue: Mailbox[Continuation]; m: int) {.cps: Continuation.} =
   var m = m
-  while m > 0:
-    queue.send: whelp work()
-    dec m
+  transaction "filling":
+    while m > 0:
+      queue.send: whelp work()
+      dec m
 
 proc attempt(N: Positive; cores: int = countProcessors()) =
   var queues: seq[Mailbox[Continuation]]
