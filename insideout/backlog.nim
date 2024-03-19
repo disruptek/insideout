@@ -143,7 +143,8 @@ proc reader(queue: Mailbox[LogMessage]) {.cps: Continuation.} =
     signal C      # let the parent continue
 
   when logLevel <= lvlNone:
-    fd.emitLog lvlNone.stringMessage("hello backlog", thread = threadId)
+    let message = fmt"hello backlog; logLevel={logLevel}"
+    fd.emitLog lvlNone.stringMessage(message, thread = threadId)
 
   discard pthread_setname_np(pthread_self(), "io: backlog")
 
