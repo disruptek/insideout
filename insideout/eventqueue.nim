@@ -1,5 +1,7 @@
 import std/atomics
+import std/macros
 import std/posix
+import std/strformat
 
 import pkg/cps
 import pkg/trees/avl
@@ -13,7 +15,10 @@ macro timerfdh(n: untyped): untyped = importer(n, newLit"<sys/timerfd.h>")
 macro timerfdh(s: untyped; n: untyped): untyped =
   importer(n, newLit"<sys/timerfd.h>", s)
 macro signalfdh(n: untyped): untyped = importer(n, newLit"<sys/signalfd.h>")
+macro signalfdh(s: untyped; n: untyped): untyped =
+  importer(n, newLit"<sys/signalfd.h>", s)
 macro eventfdh(n: untyped): untyped = importer(n, newLit"<sys/eventfd.h>")
+macro stringh(n: untyped): untyped = importer(n, newLit"<string.h>")
 macro epollh(n: untyped): untyped = importer(n, newLit"<sys/epoll.h>")
 macro epollh(s: untyped; n: untyped): untyped =
   importer(n, newLit"<sys/epoll.h>", s)
@@ -41,7 +46,7 @@ type
   Registry = AVLTree[Id, Record]
   Watchers = AVLTree[Fd, Registry]
 
-  Event = enum
+  Event* = enum
     Read
     Write
     Error
@@ -88,10 +93,16 @@ type
     u64: uint64
 
 const
-  invalidId: Id = 0.Id
+  invalidId*: Id = 0.Id
   invalidFd*: Fd = -1.Fd
-  AllEvents = {Read, Write, Error, HangUp, NoPeer, Edge, Priority, Exclusive,
-               WakeUp, Message}
+  AllEvents* = {Read, Write, Error, HangUp, NoPeer, Edge, Priority,
+                Exclusive, WakeUp, Message}
+
+proc checkErr[T](err: T): T {.discardable.} =
+  if err.cint == -1:
+    raise OSError.newException $strerror(errno)
+  else:
+    result = err
 
 type
   itimerspec {.timerfdh: "struct itimerspec".} = object
@@ -106,6 +117,85 @@ let TFD_NONBLOCK* {.timerfdh.}: cint
 let TFD_CLOEXEC* {.timerfdh.}: cint
 let TFD_TIMER_ABSTIME* {.timerfdh.}: cint
 let TFD_TIMER_CANCEL_ON_SET* {.timerfdh.}: cint
+
+type
+  signalfd_siginfo* {.signalfdh: "struct signalfd_siginfo".} = object
+    ssi_signo*: uint32        ## Signal number
+    ssi_errno*: int32         ## Error number (unused)
+    ssi_code*: int32          ## Signal code
+    ssi_pid*: uint32          ## PID of sender
+    ssi_uid*: uint32          ## Real UID of sender
+    ssi_fd*: int32            ## File descriptor (SIGIO)
+    ssi_tid*: uint32          ## Kernel timer ID (POSIX timers)
+    ssi_band*: uint32         ## Band event (SIGIO)
+    ssi_overrun*: uint32      ## POSIX timer overrun count
+    ssi_trapno*: uint32       ## Trap number that caused signal
+    ssi_status*: int32        ## Exit status or signal (SIGCHLD)
+    ssi_int*: int32           ## Integer sent by sigqueue(3)
+    ssi_ptr*: uint64          ## Pointer sent by sigqueue(3)
+    ssi_utime*: uint64        ## User CPU time consumed (SIGCHLD)
+    ssi_stime*: uint64        ## System CPU time consumed (SIGCHLD)
+    ssi_addr*: uint64         ## Address that generated signal (for hardware-generated signals)
+    ssi_addr_lsb*: uint16     ## Least significant bit of address (SIGBUS)
+    pad2: uint16
+    ssi_syscall*: uint32      ## System call number (SIGSYS)
+    ssi_call_addr*: uint64    ## Address of system call instruction (SIGSYS)
+    ssi_arch*: uint32         ## AUDIT_ARCH_* of syscall (SIGSYS)
+    pad: array[0..27, uint8]  ## Pad size to 128 bytes
+
+proc strsignal*(signo: cint): cstring {.stringh.}
+
+proc name*(info: signalfd_siginfo): string =
+  $strsignal(info.ssi_signo.cint)
+
+proc repr*(info: signalfd_siginfo): string =
+  ## return a string representation of the signalfd_siginfo
+  ## by building up a string of all the interesting fields.
+  result = fmt"{info.name}("
+  if info.ssi_errno != 0:
+    result.add fmt"ssi_errno: {info.ssi_errno}, "
+  if info.ssi_code != 0:
+    result.add fmt"ssi_code: {info.ssi_code}, "
+  if info.ssi_pid != 0:
+    result.add fmt"ssi_pid: {info.ssi_pid}, "
+  if info.ssi_uid != 0:
+    result.add fmt"ssi_uid: {info.ssi_uid}, "
+  if info.ssi_fd != 0:
+    result.add fmt"ssi_fd: {info.ssi_fd}, "
+  if info.ssi_tid != 0:
+    result.add fmt"ssi_tid: {info.ssi_tid}, "
+  if info.ssi_band != 0:
+    result.add fmt"ssi_band: {info.ssi_band}, "
+  if info.ssi_overrun != 0:
+    result.add fmt"ssi_overrun: {info.ssi_overrun}, "
+  if info.ssi_trapno != 0:
+    result.add fmt"ssi_trapno: {info.ssi_trapno}, "
+  if info.ssi_status != 0:
+    result.add fmt"ssi_status: {info.ssi_status}, "
+  if info.ssi_int != 0:
+    result.add fmt"ssi_int: {info.ssi_int}, "
+  if info.ssi_ptr != 0:
+    result.add fmt"ssi_ptr: {info.ssi_ptr}, "
+  if info.ssi_utime != 0:
+    result.add fmt"ssi_utime: {info.ssi_utime}, "
+  if info.ssi_stime != 0:
+    result.add fmt"ssi_stime: {info.ssi_stime}, "
+  if info.ssi_addr != 0:
+    result.add fmt"ssi_addr: {info.ssi_addr}, "
+  if info.ssi_addr_lsb != 0:
+    result.add fmt"ssi_addr_lsb: {info.ssi_addr_lsb}, "
+  if info.ssi_syscall != 0:
+    result.add fmt"ssi_syscall: {info.ssi_syscall}, "
+  if info.ssi_call_addr != 0:
+    result.add fmt"ssi_call_addr: {info.ssi_call_addr}, "
+  if info.ssi_arch != 0:
+    result.add fmt"ssi_arch: {info.ssi_arch}, "
+  result.add ")"
+
+proc readSigInfo*(fd: Fd): signalfd_siginfo =
+  ## read a signalfd_siginfo from `fd`
+  while EINTR == read(fd.cint, addr result, sizeof(signalfd_siginfo)):
+    discard
 
 let SFD_NONBLOCK* {.signalfdh.}: cint
 let SFD_CLOEXEC* {.signalfdh.}: cint
@@ -174,12 +264,6 @@ proc epoll_wait(epfd: cint; events: ptr epoll_event;
 proc epoll_pwait2(epfd: cint; events: ptr epoll_event; maxevents: cint;
                   timeout: ptr TimeSpec; sigmask: ptr Sigset): cint
                  {.noconv, epollh.}
-
-proc checkErr[T](err: T): T {.discardable.} =
-  if err.cint == -1:
-    raise OSError.newException $strerror(errno)
-  else:
-    result = err
 
 proc delRegistry(eq: var EventQueueObj; fd: Fd) =
   if fd in eq.watchers:
@@ -280,7 +364,6 @@ proc interruptor(eq: EventQueue) {.cps: Continuation.} =
   var i = 0
   while true:
     inc i
-    echo "interrupt " & $i
     waitForInterrupt()
 
 proc init(eq: var EventQueueObj; interruptor: sink Continuation) =
