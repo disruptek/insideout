@@ -37,18 +37,27 @@ proc main() =
     for i in 1..N:
       mailbox.send:
         whelp foo(i)
+      mailbox.interrupt(1)
     for runtime in pool.mitems:
       info runtime
       join runtime
 
-  when false:
-    info "full pool with cancellations"
-    block:
-      var mailbox = newMailbox[Continuation]()
-      var pool = newPool(ContinuationRunner, mailbox, N)
-      for runtime in pool.mitems:
-        info runtime
-        cancel runtime
-        join runtime
+  info "full pool with halts"
+  block:
+    var mailbox = newMailbox[Continuation]()
+    var pool = newPool(ContinuationRunner, mailbox, N)
+    for runtime in pool.mitems:
+      info runtime
+      halt runtime
+      join runtime
+
+  info "full pool with cancels"
+  block:
+    var mailbox = newMailbox[Continuation]()
+    var pool = newPool(ContinuationRunner, mailbox, N)
+    for runtime in pool.mitems:
+      info runtime
+      cancel runtime
+      join runtime
 
 main()

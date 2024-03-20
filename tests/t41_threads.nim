@@ -77,7 +77,7 @@ suite "runtimes + mailboxes + pools":
           info "send ", i
           remote.send:
             whelp foo(i)
-        info "might join"
+          remote.interrupt(1)
     main()
 
   block:

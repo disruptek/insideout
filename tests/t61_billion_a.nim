@@ -39,6 +39,8 @@ proc attempt(N: Positive; cores: int = countProcessors()) =
         whelp queue.filler(N div M)
       dec m
     var fillers = newPool(ContinuationRunner, fills, initialSize = M)
+    # don't join runtimes until they've all begun their filler
+    fills.waitForEmpty()
   pause queue
   info "booting ", cores, " cores"
   var now: Time
@@ -47,6 +49,7 @@ proc attempt(N: Positive; cores: int = countProcessors()) =
     var pool = newPool(ContinuationWaiter, queue, initialSize = cores)
     now = getTime()
     resume queue
+    interrupt pool
     waitForEmpty queue
     clock = (getTime() - now).inMilliseconds.float / 1000.0
     halt pool
@@ -71,5 +74,8 @@ proc main =
     notice "defaulting to ", N
   for n in cores.items:
     attempt(N, n)
+
+  # give the log a chance to output the stats
+  sleep 10
 
 main()

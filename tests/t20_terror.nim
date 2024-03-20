@@ -18,6 +18,8 @@ proc main() =
       var c = whelp foo(i)
       while Delivered != remote.trySend(c):
         discard
-    echo "might join"
+      # the remote queue is racing the pool;
+      # ensure we wake up at least one worker
+      remote.interrupt(1)
 
 main()
