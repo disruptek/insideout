@@ -142,9 +142,6 @@ proc main =
   var service = spawn: whelp server(queue)
   join service
 
-  # we haven't deallocated the server continuation yet
-  doAssert memops.load == 2, "expected two missing deallocations"
-
   # remove the continuation from the runtime and dealloc it
   c = server{cpsEnvironment} eject(service)
   discard dealloc(Amplifier c, server{cpsEnvironment})

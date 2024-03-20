@@ -6,14 +6,13 @@ import pkg/balls
 import insideout
 import insideout/backlog
 import insideout/monitors
+import insideout/atomic/flags
 
 const N = 3
 
 proc foo(i: int) {.cps: Continuation.} =
   ## do something... or rather, nothing
   discard
-
-makeHalter[Continuation, Continuation]()
 
 suite "runtimes + mailboxes + pools":
   block:
@@ -28,7 +27,7 @@ suite "runtimes + mailboxes + pools":
       closeWrite remote
       var pool = newPool(ContinuationRunner, remote, initialSize = N)
       info "pool size: ", pool.count
-      doAssert pool.count == N
+      check pool.count == N
       info "pool size: ", pool.count
       for runtime in pool.items:
         info runtime
@@ -46,7 +45,7 @@ suite "runtimes + mailboxes + pools":
           whelp foo(i)
       closeWrite remote
       var pool = newPool(ContinuationRunner, remote, initialSize = N)
-      doAssert pool.count == N
+      check pool.count == N
     main()
 
   block:
@@ -60,11 +59,11 @@ suite "runtimes + mailboxes + pools":
         remote.send:
           whelp foo(i)
       closeWrite remote
-      doAssert pool.count == N
+      check pool.count == N
       join pool
-      doAssert pool.count == N
+      check pool.count == N
       clear pool
-      doAssert pool.count == 0
+      check pool.count == 0
     main()
 
   block:
@@ -73,7 +72,7 @@ suite "runtimes + mailboxes + pools":
       let remote = newMailbox[Continuation]()
       block:
         var pool = newPool(ContinuationRunner, remote, initialSize = N)
-        doAssert pool.count == N
+        check pool.count == N
         for i in 1..N:
           info "send ", i
           remote.send:
@@ -86,9 +85,8 @@ suite "runtimes + mailboxes + pools":
     proc main() =
       let remote = newMailbox[Continuation]()
       var runtime = spawn(ContinuationWaiter, remote)
-      doAssert runtime.state == Running
+      check runtime.flags && <<!Boot
       halter(runtime, 0.1)
-      join runtime
     main()
 
   block:
@@ -96,23 +94,12 @@ suite "runtimes + mailboxes + pools":
     proc main() =
       let remote = newMailbox[Continuation]()
       var runtime = spawn(ContinuationWaiter, remote)
-      doAssert runtime.state == Running
+      check runtime.flags && <<!Boot
       var k = spawn: whelp halter(runtime, 0.1)
-      doAssert k.state == Running
+      check k.flags && <<!Boot
       join k
       join runtime
-      doAssert runtime.state == Halted
-    main()
-
-when false:
-  block:
-    ## a cancelled pool performs a join as it exits scope
-    proc main() =
-      let remote = newMailbox[Continuation]()
-      var pool = newPool(ContinuationWaiter, remote, initialSize = N)
-      doAssert pool.count == N
-      info "cancel pool: ", pool
-      cancel pool
+      check runtime.flags && <<Teardown
     main()
 
   block:
@@ -121,10 +108,20 @@ when false:
       let remote = newMailbox[Continuation]()
       var pool = newPool(ContinuationWaiter, remote, initialSize = N)
       info "pool size: ", pool.count
-      doAssert pool.count == N
+      check pool.count == N
       for runtime in pool.items:
         info runtime
       cancel pool
       info "join pool: ", pool
       join pool
+    main()
+
+  block:
+    ## a cancelled pool performs a join as it exits scope
+    proc main() =
+      let remote = newMailbox[Continuation]()
+      var pool = newPool(ContinuationWaiter, remote, initialSize = N)
+      check pool.count == N
+      info "cancel pool: ", pool
+      cancel pool
     main()
