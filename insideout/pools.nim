@@ -89,6 +89,8 @@ proc `=destroy`(pool: var PoolObj) =
   debug "destroying pool..."
   if not getCurrentException().isNil:
     halt pool
+  else:
+    interrupt pool
   join pool
   withRLock pool.lock:
     while not pool.list.head.isNil:
