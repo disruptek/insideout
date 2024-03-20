@@ -8,6 +8,7 @@ import std/times
 import pkg/cps
 
 import insideout
+import insideout/coz
 import insideout/backlog
 
 let N =
@@ -17,13 +18,15 @@ let N =
     100_000_000
 
 proc work() {.cps: Continuation.} =
+  progress "work"
   discard
 
 proc filler(queue: Mailbox[Continuation]; m: int) {.cps: Continuation.} =
   var m = m
-  while m > 0:
-    queue.send: whelp work()
-    dec m
+  transaction "filling":
+    while m > 0:
+      queue.send: whelp work()
+      dec m
 
 proc attempt(N: Positive; cores: int = countProcessors()) =
   var queues: seq[Mailbox[Continuation]]
@@ -40,9 +43,11 @@ proc attempt(N: Positive; cores: int = countProcessors()) =
     var fillers = newPool(ContinuationRunner, fills, initialSize = cores)
   block:
     var pool = newPool(ContinuationWaiter)
-    for queue in queues.mitems:
-      pause queue
-      pool.spawn(ContinuationWaiter, queue)
+    var i = queues.high
+    while i >= 0:
+      pause queues[i]
+      pool.add: spawn(ContinuationWaiter, queues[i])
+      dec i
     info "running ", N, " work items"
     let now = getTime()
     for queue in queues.mitems:

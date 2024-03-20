@@ -7,11 +7,13 @@ import pkg/cps
 import insideout/mailboxes
 import insideout/runtimes
 import insideout/threads
+import insideout/times
 
-const backlogBuffer = 64*1024  ## number of log messages to buffer
-const backlogFile = "backlog.txt"
+const backlogBuffer {.strdefine.} = 64*1024  ## number of log messages to buffer
+const backlogFile {.strdefine.} = "backlog.txt"
 const backlogPerms = S_IRUSR or S_IWUSR
 const backlogModes = O_CREAT or O_WRONLY or O_APPEND or O_NOATIME
+const backlogCoarse {.booldefine.} = defined(danger)
 
 type
   Level* = enum
@@ -27,9 +29,9 @@ type
   LogMessage* = ref object
     level: Level
     thread: int
-    monoTime: Timespec
-    realTime: Timespec
-    threadTime: Timespec
+    monoTime: TimeSpec
+    realTime: TimeSpec
+    threadTime: TimeSpec
     message: string
 
   Fd = cint  ## convenience for file descriptor, uh, description
@@ -86,14 +88,9 @@ initLock L
 var C: Cond
 initCond C
 
-proc cooperate(c: Continuation): Continuation {.cpsMagic.} = c
-
-let CLOCK_REALTIME_COARSE {.importc, header: "<time.h>", used.}: ClockId
-let CLOCK_MONOTONIC_COARSE {.importc, header: "<time.h>", used.}: ClockId
-
 var n: int
 
-when false and defined(danger):
+when backlogCoarse:
   # faster but less accurate
   let rtClock = CLOCK_REALTIME_COARSE
   let mtClock = CLOCK_MONOTONIC_COARSE
@@ -116,16 +113,13 @@ proc createMessage(level: Level; args: varargs[string, `$`]): LogMessage =
     s.add(arg)
   result = stringMessage(level, s, getThreadId())
 
-proc `$`(ts: Timespec): string =
-  var f = ts.tv_sec.float + ts.tv_nsec / 1_000_000_000
-  result = fmt"{f:>10.6f}"
-
 proc emitLog(fd: Fd; msg: sink LogMessage) =
   inc n
   var ln = newStringOfCap(48 + msg.message.len)
   #const ft = "yyyy-MM-dd\'T\'HH:mm:ss\'.\'fff \'#\'"
   #ln.add msg.time.format(ft)
-  ln.add &"{msg.level:<6s} {n:>3d} #{msg.thread:<5d} {msg.monoTime} {msg.message}\n"
+  ln.add:
+    &"{msg.level:<6s} {n:>3d} #{msg.thread:<5d} {msg.monoTime} {msg.message}\n"
   block:
     let ln = ln.cstring
     var wrote = 0
@@ -149,7 +143,8 @@ proc reader(queue: Mailbox[LogMessage]) {.cps: Continuation.} =
     signal C      # let the parent continue
 
   when logLevel <= lvlNone:
-    fd.emitLog lvlNone.stringMessage("hello backlog", thread = threadId)
+    let message = fmt"hello backlog; logLevel={logLevel}"
+    fd.emitLog lvlNone.stringMessage(message, thread = threadId)
 
   discard pthread_setname_np(pthread_self(), "io: backlog")
 
@@ -160,14 +155,12 @@ proc reader(queue: Mailbox[LogMessage]) {.cps: Continuation.} =
       fd.emitLog(move msg)
     elif not queue.waitForPoppable():
       break
-    cooperate()
+    coop()
 
   when logLevel <= lvlNone:
     fd.emitLog lvlNone.stringMessage("goodbye backlog", thread = threadId)
 
   discard close fd
-
-const QueueReader = whelp reader
 
 # instantiate the log buffer
 var queue = newMailbox[LogMessage](backlogBuffer)
@@ -187,9 +180,9 @@ proc log*(level: Level; args: varargs[string, `$`]) {.raises: [].} =
 log(lvlNone, "program began")
 
 # instantiate the reader
-var runtime: Runtime[Continuation, LogMessage]
+var runtime: Runtime
 withLock L:
-  runtime = spawn(QueueReader, queue)
+  runtime = spawn: whelp reader(queue)
   wait(C, L)
 # the reader is running
 

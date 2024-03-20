@@ -8,15 +8,14 @@ import std/strutils
 
 import pkg/cps
 import pkg/loony
-from pkg/balls import checkpoint
 
+import insideout/spec
 import insideout/futexes
 import insideout/atomic/flags
 import insideout/atomic/refs
 export refs
 
-const insideoutSafeMode* {.booldefine.} = true
-const insideoutGratuitous {.booldefine.} = false
+export insideoutSafeMode
 
 when insideoutSafeMode:
   import std/rlocks
@@ -84,6 +83,12 @@ proc resume*[T](mail: Mailbox[T])
 proc len*[T](mail: Mailbox[T]): uint32 =
   assert not mail.isNil
   result = load(mail[].size, order = moAcquire)
+  let w = load(mail[].writers, order = moAcquire)
+  #if w != 0: debug "writers: ", w
+  result += w
+  let r = load(mail[].readers, order = moAcquire)
+  #if r != 0: debug "readers: ", r
+  result -= r
 
 proc capacity*[T](mail: Mailbox[T]): uint32 =
   assert not mail.isNil
@@ -174,6 +179,18 @@ when false:
     put(result[].state, voidFlags)
   #proc newMailbox*[T: not void](): Mailbox[T] =
 
+proc construct[T](mail: var MailboxObj[T]; capacity: uint32) =
+  let capacity: uint32 = when T is void: 0 else: capacity
+  store(mail.capacity, capacity, order = moSequentiallyConsistent)
+  store(mail.size, 0, order = moSequentiallyConsistent)
+  store(mail.reads, 0, order = moSequentiallyConsistent)
+  store(mail.writes, 0, order = moSequentiallyConsistent)
+  # a valid bitmask for futex use
+  store(mail.readers, 1, order = moSequentiallyConsistent)
+  store(mail.writers, 1, order = moSequentiallyConsistent)
+  if 0 == capacity:
+    discard mail.state.enable Full
+
 proc newMailbox*[T: not void](capacity: uint32): Mailbox[T] =
   ## create a new mailbox which can hold `capacity` items
   new result
@@ -188,23 +205,18 @@ proc newMailbox*[T: not void](capacity: uint32): Mailbox[T] =
         discard
       reset result[].queue
     result[].queue = newLoonyQueue[T]()
-  store(result[].capacity, capacity, order = moSequentiallyConsistent)
-  store(result[].size, 0, order = moSequentiallyConsistent)
-  store(result[].reads, 0, order = moSequentiallyConsistent)
-  store(result[].writes, 0, order = moSequentiallyConsistent)
-  # a valid bitmask for futex use
-  store(result[].readers, 1, order = moSequentiallyConsistent)
-  store(result[].writers, 1, order = moSequentiallyConsistent)
-  if 0 == capacity:
-    result[].state.enable Full
+  construct(result[], capacity)
   resume result
   discard checkWake wake(result[].state)
 
 proc newMailbox*[T](): Mailbox[T] =
   ## create a new mailbox (likely) limited only by available memory
-  when T is void:
+  when T is void:  # workaround for nimskull
     new result
     put(result[].state, voidFlags)
+    construct(result[], 0)
+    resume result
+    discard checkWake wake(result[].state)
   else:
     result = newMailbox[T](high uint32)
 
@@ -212,30 +224,23 @@ proc performWait[T](mail: Mailbox[T]; has: uint32; wants: uint32): bool {.discar
   ## true if we had to wait; false otherwise
   result = 0 == (has and wants)
   if result:
-    when insideoutSafeMode:
-      checkWait waitMask(mail[].state, has, wants, 0.1)
+    # FIXME:
+    let e = checkWait waitMask(mail[].state, has, wants, 0.05)
+    case e
+    of EINTR:
+      debug "INTERRUPT"
     else:
-      checkWait waitMask(mail[].state, has, wants)
+      discard
 
 proc isEmpty*[T](mail: Mailbox[T]): bool =
   assert not mail.isNil
-  when T is void:
-    true
-  else:
-    when not insideoutSafeMode:
-      assert not mail[].queue.isNil
-    let state = get mail[].state
-    result = state && <<Empty
+  let state = get mail[].state
+  result = state && <<Empty
 
 proc isFull*[T](mail: Mailbox[T]): bool =
   assert not mail.isNil
-  when T is void:
-    true
-  else:
-    when not insideoutSafeMode:
-      assert not mail[].queue.isNil
-    let state = get mail[].state
-    result = state && <<Full
+  let state = get mail[].state
+  result = state && <<Full
 
 proc waitForPushable*[T](mail: Mailbox[T]): bool =
   ## true if the mailbox is pushable, false if it never will be
@@ -246,21 +251,10 @@ proc waitForPushable*[T](mail: Mailbox[T]): bool =
     result = true
     discard mail.performWait(state, <<!{Writable, Paused})
   elif state && <<Full:
-    when false:
-      if mail.len == mail.capacity:
-        # NOTE: short-circuit when the mailbox is full and unreadable
-        result = state && <<Readable
-        if result:
-          discard mail.performWait(state, <<!{Writable, Readable, Full})
-      else:
-        discard disable(mail[].state, Full)
-        checkWake wakeMask(mail[].state, <<!Full)
-        result = true
-    else:
-      # NOTE: short-circuit when the mailbox is full and unreadable
-      result = state && <<Readable
-      if result:
-        discard mail.performWait(state, <<!{Writable, Readable, Full})
+    # NOTE: short-circuit when the mailbox is full and unreadable
+    result = state && <<Readable
+    if result:
+      discard mail.performWait(state, <<!{Writable, Readable, Full})
   else:
     result = true
 
@@ -273,21 +267,10 @@ proc waitForPoppable*[T](mail: Mailbox[T]): bool =
     result = true
     discard mail.performWait(state, <<!{Readable, Paused})
   elif state && <<Empty:
-    when false:
-      if mail.len == 0:
-        # NOTE: short-circuit when the mailbox is empty and unwritable
-        result = state && <<Writable
-        if result:
-          discard mail.performWait(state, <<!{Writable, Readable, Empty})
-      else:
-        discard disable(mail[].state, Empty)
-        checkWake wakeMask(mail[].state, <<!Empty)
-        result = true
-    else:
-      # NOTE: short-circuit when the mailbox is empty and unwritable
-      result = state && <<Writable
-      if result:
-        discard mail.performWait(state, <<!{Writable, Readable, Empty})
+    # NOTE: short-circuit when the mailbox is empty and unwritable
+    result = state && <<Writable
+    if result:
+      discard mail.performWait(state, <<!{Writable, Readable, Empty})
   else:
     result = true
 
@@ -301,12 +284,12 @@ proc markEmpty[T](mail: var MailboxObj[T]): MailFlag =
     var woke = false
     woke = woke or enable(mail.state, Empty)
     woke = woke or disable(mail.state, Readable)
-    #if woke:
-    checkWake wakeMask(mail.state, <<Empty + <<!Readable)
+    if woke:
+      checkWake wakeMask(mail.state, <<Empty + <<!Readable)
   else:
     result = Empty
-    discard enable(mail.state, Empty)
-    checkWake wakeMask(mail.state, <<Empty)
+    if enable(mail.state, Empty):
+      checkWake wakeMask(mail.state, <<Empty)
 
 proc markFull[T](mail: var MailboxObj[T]): MailFlag =
   ## mark the mailbox as full; if it's also unreadable,
@@ -318,19 +301,18 @@ proc markFull[T](mail: var MailboxObj[T]): MailFlag =
     var woke = false
     woke = woke or enable(mail.state, Full)
     woke = woke or disable(mail.state, Writable)
-    #if woke:
-    checkWake wakeMask(mail.state, <<Full + <<!Writable)
+    if woke:
+      checkWake wakeMask(mail.state, <<Full + <<!Writable)
   else:
     result = Full
-    discard enable(mail.state, Full)
-    checkWake wakeMask(mail.state, <<Full)
+    if enable(mail.state, Full):
+      checkWake wakeMask(mail.state, <<Full)
 
 when insideoutSafeMode:
-  proc unboundedPush[T](mail: var MailboxObj[T]; item: sink T): MailFlag =
+  proc unboundedPush[T](mail: var MailboxObj[T]; item: var T): MailFlag =
     withRLock mail.lock:
-      when insideoutGratuitous:
-        when item isnot Continuation:
-          echo getThreadId(), " add item ", item[]
+      when item isnot Continuation:
+        debug "add item ", item[]
       var node = ListNode[T](value: move item)
       if mail.list.head.isNil:
         node.next = node
@@ -341,7 +323,7 @@ when insideoutSafeMode:
       mail.list.tail = move node
       result = Delivered
 else:
-  proc unboundedPush[T](mail: var MailboxObj[T]; item: sink T): MailFlag =
+  proc unboundedPush[T](mail: var MailboxObj[T]; item: var T): MailFlag =
     ## push an item without regard to bounds
     mail.queue.unsafePush(move item)
     #mail.queue.push(move item)
@@ -350,14 +332,12 @@ else:
 proc performPush[T](mail: Mailbox[T]; item: var T): MailFlag =
   ## safely push an item onto the mailbox; returns Delivered
   ## if successful, else Full or Interrupt
-  when T is void: return Full
   let capacity = mail.capacity
   if capacity <= 0: return Full  # no room at the inn
   let size = mail.len
   if size >= capacity: return Full
   when insideoutSafeMode:
-    when insideoutGratuitous:
-      echo getThreadId(), " acquire"
+    debug "acquire"
     acquire mail[].lock
     let mo = moSequentiallyConsistent
   else:
@@ -365,8 +345,7 @@ proc performPush[T](mail: Mailbox[T]; item: var T): MailFlag =
   discard fetchAdd(mail[].writers, 1, order = mo)
   result = unboundedPush(mail[], item)
   #assert result == Delivered
-  when insideoutGratuitous:
-    echo getThreadId(), " push ", size
+  debug "push ", size
   discard fetchSub(mail[].writers, 1, order = mo)
   if result == Delivered:
     discard fetchAdd(mail[].writes, 1, order = mo)
@@ -376,17 +355,13 @@ proc performPush[T](mail: Mailbox[T]; item: var T): MailFlag =
     if prior >= capacity-1:
       discard mail[].markFull()
   when insideoutSafeMode:
-    when insideoutGratuitous:
-      echo getThreadId(), " release"
+    debug "release"
     release mail[].lock
-  # FIXME
-  #checkWake wake(mail[].state)
 
 proc trySend*[T](mail: Mailbox[T]; item: var T): MailFlag =
   ## non-blocking attempt to push an item into the mailbox
   assert not mail.isNil
-  when T is void: return Full
-  when insideoutGratuitous:
+  when not defined(danger):
     if unlikely item.isNil:
       raise ValueError.newException "attempt to send nil"
   let state = get mail[].state
@@ -394,7 +369,7 @@ proc trySend*[T](mail: Mailbox[T]; item: var T): MailFlag =
     Unwritable
   elif state && <<Paused:
     Paused
-  elif state && <<Full:
+  elif state && <<Full and mail.len >= mail.capacity:
     Full
   else:
     mail.performPush(item)
@@ -420,8 +395,6 @@ when insideoutSafeMode:
     ## pop an item without regard to bounds
     withRLock mail.lock:
       if mail.list.head.isNil:
-        when insideoutGratuitous:
-          echo getThreadId(), " remove (empty)"
         result = Empty  # for parity with loony
       elif mail.list.head.next == mail.list.head:  # last item
         reset mail.list.head.next
@@ -435,35 +408,24 @@ when insideoutSafeMode:
           mail.list.tail.next = mail.list.head
         item = move node.value
         result = Received
-    if result == Received:
-      when insideoutGratuitous:
-        when item isnot Continuation:
-          if item.isNil:
-            echo getThreadId(), " remove nil"
-          else:
-            echo getThreadId(), " remove ", item[]
-      discard fetchAdd(mail.reads, 1, order = moRelaxed)
 else:
   proc unboundedPop[T](mail: var MailboxObj[T]; item: var T): MailFlag =
     ## pop an item without regard to bounds
-    #item = mail.queue.unsafePop()
-    item = mail.queue.pop()
+    item = mail.queue.unsafePop()
+    #item = mail.queue.pop()
     if item.isNil:
       result = Empty
     else:
       result = Received
-      discard fetchAdd(mail.reads, 1, order = moRelaxed)
 
 proc performPop[T](mail: Mailbox[T]; item: var T): MailFlag =
   ## safely pop an item from the mailbox; returns Received
-  when T is void: return Empty
   let capacity = mail.capacity
   if capacity <= 0: return Empty  # no room at the inn
   let size = mail.len
   if size <= 0: return Empty
   when insideoutSafeMode:
-    when insideoutGratuitous:
-      echo getThreadId(), " acquire"
+    debug "acquire"
     acquire mail[].lock
     let mo = moSequentiallyConsistent
   else:
@@ -471,16 +433,14 @@ proc performPop[T](mail: Mailbox[T]; item: var T): MailFlag =
   discard fetchAdd(mail[].readers, 1, order = mo)
   result = unboundedPop(mail[], item)
   #assert result == Received
-  when insideoutGratuitous:
-    echo getThreadId(), " pop ", size, " ", result
+  debug "pop ", size, " ", result
   discard fetchSub(mail[].readers, 1, order = mo)
   if result == Received:
-    when insideoutGratuitous:
-      when item isnot Continuation:
-        if item.isNil:
-          echo getThreadId(), " remove nil"
-        else:
-          echo getThreadId(), " remove ", item[]
+    when item isnot Continuation:
+      if item.isNil:
+        debug "remove nil"
+      else:
+        debug "remove ", item[]
     discard fetchAdd(mail[].reads, 1, order = mo)
     let prior = fetchSub(mail[].size, 1, order = mo)
     if disable(mail[].state, Full):
@@ -488,22 +448,18 @@ proc performPop[T](mail: Mailbox[T]; item: var T): MailFlag =
     if prior <= 1:
       discard mail[].markEmpty()
   when insideoutSafeMode:
-    when insideoutGratuitous:
-      echo getThreadId(), " release"
+    debug "release"
     release mail[].lock
-  # FIXME
-  #checkWake wake(mail[].state)
 
 proc tryRecv*[T](mail: Mailbox[T]; item: var T): MailFlag =
   ## non-blocking attempt to pop an item from the mailbox
   assert not mail.isNil
-  when T is void: return Empty
   let state = get mail[].state
   if state && <<!Readable:
     Unreadable
   elif state && <<Paused:
     Paused
-  elif state && <<Empty:
+  elif state && <<Empty and mail.len == 0:
     Empty
   else:
     mail.performPop(item)

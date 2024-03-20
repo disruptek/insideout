@@ -11,31 +11,29 @@ else:
     insideoutCoz* = false
 
 when insideoutCoz:
-  {.passC: "-include coz.h".}
-  {.passL: "-ldl".}
+  {.passC: "-gdwarf-3".}
+  {.passL: "-gdwarf-3 -ldl".}
 
-  proc emitCoz(name: string; s: string): NimNode =
-    var s = "$#($#);" % [ name, escape(s) ]
-    nnkPragma.newTree:
-      nnkExprColonExpr.newTree:
-        [ident"emit", nnkBracket.newTree s.newLit]
+  proc progress*(name: cstring)
+    {.importc: "COZ_PROGRESS_NAMED", header: "<coz.h>".}
 
-  macro progress*(name: static[string]): untyped =
-    emitCoz("COZ_PROGRESS_NAMED", name)
+  proc progress*()
+    {.importc: "COZ_PROGRESS", header: "<coz.h>".}
+
+  proc COZ_BEGIN(name: cstring) {.importc, header: "<coz.h>".}
+  proc COZ_END(name: cstring) {.importc, header: "<coz.h>".}
 
   macro transaction*(name: static[string]; body: typed): untyped =
     result = newStmtList()
     result.add:
-      emitCoz("COZ_BEGIN", name)
+      newCall(bindSym"COZ_BEGIN", name.newLit)
     result.add:
       nnkDefer.newTree:
-        emitCoz("COZ_END", name)
+        newCall(bindSym"COZ_END", name.newLit)
     result.add:
       body
 
 else:
-  template progress*(name: static[string]): untyped =
-    discard
-
-  template transaction*(name: static[string]; body: typed): untyped =
-    body
+  template progress*(): untyped = discard
+  template progress*(name: cstring): untyped = discard
+  template transaction*(name: cstring; body: typed): untyped = body

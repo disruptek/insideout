@@ -10,13 +10,13 @@ suite "futexes":
   echo getThreadId()
   var x: Atomic[uint32]
   store(x, 1, order = moSequentiallyConsistent)
-  check -1 == wait(x, 1, timeout = 0.01)
+  check -1 == wait(x, 1, timeout = 0.001)
   check errno == ETIMEDOUT
-  check ETIMEDOUT == checkWait wait(x, 1, timeout = 0.01)
+  check ETIMEDOUT == checkWait wait(x, 1, timeout = 0.001)
   store(x, 2, order = moSequentiallyConsistent)
-  check -1 == wait(x, 1, timeout = 0.01)
+  check -1 == wait(x, 1, timeout = 0.001)
   check errno == EAGAIN
-  check EAGAIN == checkWait wait(x, 1, timeout = 0.01)
+  check EAGAIN == checkWait wait(x, 1, timeout = 0.001)
 
   ## waitMask()
   store(x, 1, order = moSequentiallyConsistent)
@@ -25,9 +25,9 @@ suite "futexes":
   check -1 == waitMask(x, 2, 4)
   check errno == EAGAIN
   check EAGAIN == checkWait waitMask(x, 2, 4)
-  check -1 == waitMask(x, 2, 4, timeout = 0.01)
+  check -1 == waitMask(x, 2, 4, timeout = 0.001)
   check errno == EAGAIN
-  check EAGAIN == checkWait waitMask(x, 2, 4, timeout = 0.01)
-  check -1 == waitMask(x, 1, 2, timeout = 0.01)
+  check EAGAIN == checkWait waitMask(x, 2, 4, timeout = 0.001)
+  check -1 == waitMask(x, 1, 2, timeout = 0.001)
   check errno == ETIMEDOUT
-  check ETIMEDOUT == checkWait waitMask(x, 1, 2, timeout = 0.01)
+  check ETIMEDOUT == checkWait waitMask(x, 1, 2, timeout = 0.001)

@@ -1,38 +1,13 @@
-when not defined(isNimSkull):
-  when (NimMajor, NimMinor) < (1, 7):
-    {.error: "insideout requires nim >= 1.7".}
-
-when not defined(gcArc) and not defined(gcOrc):
-  {.error: "insideout requires arc or orc memory management".}
-
-when not defined(useMalloc):
-  {.error: "insideout requires define:useMalloc".}
-
-when not (defined(c) or defined(cpp)):
-  {.error: "insideout requires backend:c or backend:cpp".}
-
-when not (defined(posix) and compileOption"threads"):
-  {.error: "insideout requires POSIX threads".}
-
 import std/genasts
 import std/macros
 
 import pkg/cps
 
+import insideout/spec
 import insideout/pools
 import insideout/mailboxes
 import insideout/runtimes
 import insideout/valgrind
-
-when false:
-  import insideout/backlog
-  export backlog
-elif defined(danger):
-  template debug(args: varargs[untyped]) = discard
-else:
-  import std/strutils
-  template debug(args: varargs[string, `$`]) =
-    stdmsg().writeLine $getThreadId() & " " & args.join("")
 
 export mailboxes
 export runtimes
@@ -46,10 +21,6 @@ proc goto*[T](continuation: var T; where: Mailbox[T]): T {.cpsMagic.} =
   where.send(move continuation)
   result = nil.T
 
-proc cooperate*(a: sink Continuation): Continuation {.cpsMagic.} =
-  ## yield to the dispatcher
-  a
-
 macro createWaitron*(A: typedesc; B: typedesc): untyped =
   ## The compiler really hates when you do this one thing;
   ## but they cannot stop you!
@@ -60,7 +31,7 @@ macro createWaitron*(A: typedesc; B: typedesc): untyped =
   genAstOpt({}, name, A, B):
     proc name(box: Mailbox[B]) {.cps: A.} =
       ## continuously consume and run `B` continuations
-      mixin cooperate
+      mixin coop
       debug "starting waitron"
       while true:
         var c: Continuation
@@ -75,7 +46,7 @@ macro createWaitron*(A: typedesc; B: typedesc): untyped =
           while c.running:
             debug "will bounce continuation"
             c = bounce c
-            cooperate()
+            coop()
           # reap the local in the cps environment
           reset c
         else:
@@ -83,7 +54,7 @@ macro createWaitron*(A: typedesc; B: typedesc): untyped =
           if not box.waitForPoppable():
             debug "shutting down due to unavailable mailbox"
             break
-        cooperate()
+        coop()
       debug "exiting waitron"
 
     whelp name
@@ -98,7 +69,7 @@ macro createRunner*(A: typedesc; B: typedesc): untyped =
   genAstOpt({}, name, A, B):
     proc name(box: Mailbox[B]) {.cps: A.} =
       ## run a single `B` continuation
-      mixin cooperate
+      mixin coop
       debug "starting ", B, " runner"
       while true:
         var c: Continuation
@@ -108,7 +79,7 @@ macro createRunner*(A: typedesc; B: typedesc): untyped =
           while c.running:
             debug "will bounce continuation"
             c = bounce c
-            cooperate()
+            coop()
           reset c
           break
         of Unreadable:
@@ -122,7 +93,7 @@ macro createRunner*(A: typedesc; B: typedesc): untyped =
             debug "shutting down due to unavailable mailbox"
             break
           debug "wait complete"
-        cooperate()
+        coop()
       debug "exiting ", B, " runner"
 
     whelp name
