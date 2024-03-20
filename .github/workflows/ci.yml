@@ -108,13 +108,11 @@ jobs:
           NIMSKULL_BIN: ${{ steps.nimskull.outputs.bin-path }}
 
 #     - name: Valgrind
-#       shell: bash
 #       run: |
 #         sudo apt-get update
 #         sudo apt install --fix-missing valgrind
 
       - name: Dependencies
-        shell: bash
         run: |
           nimble --accept install "https://github.com/disruptek/balls"
           nimble --accept develop
@@ -122,7 +120,6 @@ jobs:
           NIM: ${{ matrix.compiler.name }}
 
       - name: Examples
-        shell: bash
         run: |
           cd examples
           balls '***' --path=".." \
@@ -133,7 +130,6 @@ jobs:
           NIM: ${{ matrix.compiler.name }}
 
       - name: Locked Tests
-        shell: bash
         run: |
           balls --path="." --define:insideoutSafeMode=on \
                 --backend:c --panics:on \
@@ -141,7 +137,6 @@ jobs:
                 --define:debug --define:release --define:danger
 
       - name: Loony Tests
-        shell: bash
         run: |
           balls --path="." --define:insideoutSafeMode=off \
                 --backend:c --panics:on \
