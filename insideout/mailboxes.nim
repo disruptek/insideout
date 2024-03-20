@@ -220,17 +220,27 @@ proc newMailbox*[T](): Mailbox[T] =
   else:
     result = newMailbox[T](high uint32)
 
+proc interrupt*[T](mail: Mailbox[T]; count = high(uint32)) =
+  ## interrupt some threads waiting on the mailbox
+  assert not mail.isNil
+  discard mail[].state.enable Interrupt
+  # always wake the specified number of waiters
+  checkWake wakeMask(mail[].state, <<Interrupt, count = count)
+
 proc performWait[T](mail: Mailbox[T]; has: uint32; wants: uint32): bool {.discardable.} =
   ## true if we had to wait; false otherwise
+  let wants = wants and <<Interrupt  # always wake on interrupt
   result = 0 == (has and wants)
   if result:
-    # FIXME:
-    let e = checkWait waitMask(mail[].state, has, wants, 0.05)
+    let e = checkWait waitMask(mail[].state, has, wants)
     case e
     of EINTR:
       debug "INTERRUPT"
     else:
       discard
+    # consume any Interrupt and wake a single interruptee
+    if mail[].state.disable Interrupt:
+      checkWake wakeMask(mail[].state, <<!Interrupt, count = 1)
 
 proc isEmpty*[T](mail: Mailbox[T]): bool =
   assert not mail.isNil
