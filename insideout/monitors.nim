@@ -1,4 +1,3 @@
-import std/macros
 import std/posix
 
 import pkg/cps
@@ -18,9 +17,8 @@ proc sleep*(timeout: float) {.cps: Continuation.} =
     else:
       break
 
-template makeHalter*[A, B](): untyped =
-  proc halter(runtime: Runtime; timeout: float) {.cps: Continuation.} =
-    sleep timeout
-    halt runtime
-    signal(runtime, SIGINT)
-    join runtime
+proc halter*(runtime: Runtime; timeout: float) {.cps: Continuation.} =
+  sleep timeout
+  halt runtime
+  interrupt runtime
+  join runtime
