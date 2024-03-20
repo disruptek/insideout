@@ -63,6 +63,17 @@ proc halt*(pool: Pool) =
   assert not pool.isNil
   halt pool[]
 
+proc interrupt(pool: var PoolObj) =
+  withRLock pool.lock:
+    for item in pool.list.items:
+      debug "interrupting ", item, " in pool..."
+      interrupt item
+
+proc interrupt*(pool: Pool) =
+  ## interrupt all threads in the pool
+  assert not pool.isNil
+  interrupt pool[]
+
 proc signal(pool: var PoolObj; sig: int) =
   withRLock pool.lock:
     for item in pool.list.items:
