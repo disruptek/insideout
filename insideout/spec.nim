@@ -22,7 +22,10 @@ const insideoutGratuitous* {.booldefine.} = false
 when insideoutGratuitous:
   import std/strutils
   template debug*(args: varargs[string, `$`]) =
-    stdmsg().writeLine $getThreadId() & " " & args.join("")
+    try:
+      stdmsg().writeLine $getThreadId() & " " & args.join("")
+    except IOError:
+      discard
 else:
   template debug*(args: varargs[untyped]) = discard
 
