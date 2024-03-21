@@ -8,7 +8,7 @@ import pkg/cps
 import insideout/spec as iospec
 import insideout/runtimes
 import insideout/mailboxes
-import insideout/pools/saferemove   # a hack around stdlib bug
+import insideout/saferlists
 
 type
   PoolNode {.used.} = SinglyLinkedNode[Runtime]
