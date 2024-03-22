@@ -7,20 +7,22 @@ import std/strutils
 import pkg/cps
 
 import insideout/spec as iospec
-import insideout/futexes
 import insideout/atomic/flags
 import insideout/atomic/refs
 export refs
 
+import insideout/eventqueue
+import insideout/futexes
+import insideout/linked
 import insideout/mailboxes
 import insideout/threads
-import insideout/eventqueue
 
 export coop
 
 const insideoutAggressiveDealloc {.booldefine.} = false
+
 let insideoutInterruptSignal* = SIGRTMIN
-let unmaskedSignals = {SIGINT, SIGTERM, insideoutInterruptSignal}
+let unmaskedSignals = {insideoutInterruptSignal}
 
 type
   RuntimeError* = object of OSError
@@ -35,15 +37,19 @@ type
     Teardown   = 5    # 32 / 2097152
     Dead       = 6    # 64 / 4194304
 
-  RuntimeObj = object
+  RuntimeObj {.acyclic.} = object
     handle: PThread
     parent: PThread
     flags: AtomicFlags32
     signals: Fd
+    lock: Lock
     continuation: Continuation
     error: ref CatchableError
+    linked: LinkedList[AtomicRef[RuntimeObj]]
 
   Runtime* = AtomicRef[RuntimeObj]
+
+  WaitMode = enum AllFlags, AnyFlags
 
 const deadFlags = <<Dead or <<!{Boot, Teardown, Frozen, Running, Halted, Linked}
 const bootFlags = <<Boot or <<!{Dead, Teardown, Frozen, Running, Halted}
@@ -101,22 +107,33 @@ proc interrupt*(runtime: Runtime) =
   ## interrupt a running runtime
   interrupt runtime[]
 
-proc pause*(runtime: Runtime) =
-  ## pause a running runtime
-  if runtime[].flags.enable Frozen:
-    checkWake wakeMask(runtime[].flags, <<Frozen)
+proc freeze*(runtime: Runtime) =
+  ## pause a runtime
+  while true:
+    let flags = get runtime[].flags
+    if 0 != (flags and <<!{Teardown, Frozen, Halted}):
+      break
+    var prior = flags
+    let future = (flags xor <<!Frozen) and <<Frozen
+    if compareExchange(runtime[].flags, prior, future,
+                       order = moSequentiallyConsistent):
+      checkWake wakeMask(runtime[].flags, <<Frozen)
+      break
 
-proc resume*(runtime: Runtime) =
-  ## resume a running runtime
+proc thaw*(runtime: Runtime) =
+  ## resume (unfreeze) a runtime
   if runtime[].flags.disable Frozen:
     checkWake wakeMask(runtime[].flags, <<!Frozen)
   interrupt runtime[]
 
-proc waitForFlags(runtime: var RuntimeObj; wants: uint32): bool {.raises: [RuntimeError].} =
-  ## wait until the runtime has all of `wants` flags set
+proc waitForFlags(runtime: var RuntimeObj; mode: WaitMode; wants: uint32): bool {.raises: [RuntimeError].} =
+  ## wait until the runtime has all|any of `wants` flags set
   while true:
     var has = get runtime.flags
-    result = wants == (has and wants)
+    result =
+      case mode
+       of AllFlags: (has and wants) == wants
+       of AnyFlags: (has and wants) != 0
     if result:
       break
     let err =
@@ -134,14 +151,17 @@ proc waitForFlags(runtime: var RuntimeObj; wants: uint32): bool {.raises: [Runti
 
 proc halt*(runtime: Runtime): bool {.discardable.} =
   ## ask the runtime to exit; true if the runtime wasn't already halted
-  result = runtime[].flags.enable Halted
-  if result:
-    interrupt runtime[]
-    checkWake wakeMask(runtime[].flags, <<Halted)
+  let flags = runtime.flags
+  # XXX: raise if the runtime is in a bogus state?
+  if flags && <<!Dead:
+    result = runtime[].flags.enable Halted
+    if result:
+      interrupt runtime[]
+      checkWake wakeMask(runtime[].flags, <<Halted)
 
 proc join*(runtime: sink Runtime) {.raises: [RuntimeError].} =
   ## block until the runtime has exited
-  if not waitForFlags(runtime[], doneFlags):
+  if not waitForFlags(runtime[], AllFlags, doneFlags):
     raise RuntimeError.newException "runtime failed to exit"
 
 proc cancel*(runtime: Runtime): bool {.discardable.} =
@@ -156,13 +176,11 @@ proc `=destroy`(runtime: var RuntimeObj) =
   # wake all waiters on the flags in order to free any
   # queued waiters in kernel space
   checkWake wake(runtime.flags)
-  for key, value in runtime.fieldPairs:
-    when value is Fd:
-      close value
-    elif value is AtomicFlags32:
-      discard
-    else:
-      reset value
+  reset runtime.linked
+  withLock runtime.lock:
+    reset runtime.continuation
+    reset runtime.error
+  deinitLock runtime.lock
 
 proc renderError(e: ref Exception; s = "crash;"): string =
   result = newStringOfCap(16 + s.len + e.name.len + e.msg.len)
@@ -195,20 +213,23 @@ proc deallocRuntime(runtime: pointer) {.noconv.} =
 
 template exceptionHandler(e: ref Exception; s: static string): cint =
   ## some exception-handling boilerplate
-  when compileOption"stackTrace":
-    writeStackTrace()
-  stdmsg().writeLine:
-    renderError(e, s)
-  if errno > 0: errno else: 1
+  {.line: instantiationInfo(fullPaths=true).}:
+    when compileOption"stackTrace":
+      writeStackTrace()
+    stdmsg().writeLine:
+      renderError(e, s)
+    if errno > 0: errno else: 1
 
 proc teardown(p: pointer) {.noconv.} =
   ## we receive a pointer to a runtime object and we perform any necessary
   ## cleanup; this is run during thread destruction
   mixin dealloc
   var runtime = cast[Runtime](p)
-  if runtime[].flags.enable Teardown:
-    checkWake wakeMask(runtime[].flags, <<Teardown)
+  # make sure we aren't holding the continuation lock
+  release runtime[].lock
   try:
+    # it seems like the right move is to render the runtime
+    # inoperable and let another owner actually dealloc us.
     when insideoutAggressiveDealloc:
       try:
         runtime[].continuation = dealloc(runtime[].continuation, Continuation)
@@ -221,7 +242,9 @@ proc teardown(p: pointer) {.noconv.} =
         const cErrorMsg = "destroying continuation;"
         discard e.exceptionHandler cErrorMsg
   finally:
-    # don't reset the linked and halted status flags
+    # it's time to quiesce the flags, leaving Linked and Halted
+    # in place for any post-mortem.  this is where we will halt
+    # any linked runtimes.
     let flags = get runtime[].flags
     var also = (flags and <<Linked) or (flags and <<!Linked)
     also = also or (flags and <<Halted) or (flags and <<!Halted)
@@ -229,6 +252,11 @@ proc teardown(p: pointer) {.noconv.} =
     # wake all waiters on the flags in order to free any queued
     # waiters in kernel space
     checkWake wake(runtime[].flags)
+    # perform the halts of any linked peers
+    if (also && <<Halted) and (also && <<Linked):
+      var peer: Runtime
+      while tryPop(runtime[].linked, peer):
+        halt peer
 
 template mayCancel(r: typed; body: typed): untyped {.used.} =
   var prior: cint
@@ -241,7 +269,7 @@ template mayCancel(r: typed; body: typed): untyped {.used.} =
 const emptyTimeSpec = TimeSpec(tv_sec: 0.Time, tv_nsec: 0.clong)
 
 proc process(eq: var EventQueue; runtime: var RuntimeObj): cint =
-  ## process any events or signals in each iteration of the event loop
+  ## process one event or signal in each iteration of the event loop
   var events {.noinit.}: array[1, epoll_event]
   try:
     let ready = eq.wait(events, timeout = addr emptyTimeSpec, nil)
@@ -258,12 +286,13 @@ type
   Phase = enum
     BootPhase      ## instantiate continuation
     RunPhase       ## entering the running state
-    CheckState     ## test for cancel, frozen
     RunningPhase   ## running
     FreezePhase    ## entering the frozen state
     FrozenPhase    ## frozen
     HaltPhase      ## exiting before continuation is finished
     ExitPhase      ## exiting
+
+const CheckState = RunPhase
 
 proc inc(p: var Phase) =
   p = Phase: p.ord + 1
@@ -295,25 +324,27 @@ proc loop(eq: var EventQueue; runtime: var RuntimeObj): cint =
     case phase
     of BootPhase:
       # check for a bogus/missing factory composition
-      if runtime.continuation.isNil:
-        runtime.error = ValueError.newException "nil continuation"
-        const bErrorMsg = "nil continuation;"
-        nextIf exceptionHandler(runtime.error, bErrorMsg)
-      else:
-        inc phase
+      withLock runtime.lock:
+        if runtime.continuation.isNil:
+          runtime.error = ValueError.newException "nil continuation"
+          const bErrorMsg = "nil continuation;"
+          nextIf exceptionHandler(runtime.error, bErrorMsg)
+        else:
+          inc phase
     of RunPhase:
-      if runtime.flags.enable Running:
-        checkWake wakeMask(runtime.flags, <<Running)
-      when insideoutRenameThread:
-        nextIf pthread_setname_np(runtime.handle, "io: running")
-      else:
-        inc phase
-    of CheckState:
-      pthread_testcancel()
       if flags && <<Frozen:
         phase = FreezePhase
       else:
-        inc phase
+        if runtime.flags.enable Running:
+          acquire runtime.lock
+          checkWake wakeMask(runtime.flags, <<Running)
+          when insideoutRenameThread:
+            nextIf pthread_setname_np(runtime.handle, "io: running")
+          else:
+            inc phase
+        else:
+          inc phase
+      pthread_testcancel()
     of RunningPhase:
       try:
         var fn: ContinuationFn = runtime.continuation.fn
@@ -334,10 +365,15 @@ proc loop(eq: var EventQueue; runtime: var RuntimeObj): cint =
             ExitPhase
           else:
             CheckState
+        when defined(isNimSkull):
+          echo "nimskull bug #", 0.toHex
       except CatchableError as e:
         result = exceptionHandler(e, "dispatcher crash;")
         phase = HaltPhase
     of FreezePhase: # we're entering the frozen state
+      if runtime.flags.disable Running:
+        release runtime.lock
+        checkWake wakeMask(runtime.flags, <<!Running)
       when insideoutRenameThread:
         nextIf pthread_setname_np(runtime.handle, "io: frozen")
       else:
@@ -354,7 +390,7 @@ proc loop(eq: var EventQueue; runtime: var RuntimeObj): cint =
           elif flags && <<Frozen:    # spurious wakeup
             FrozenPhase              # loop and don't rename thread
           else:                      # unfrozen
-            RunPhase
+            CheckState
       of ETIMEDOUT:
         runtime.error = RuntimeError.newException "timeout waiting to unfreeze"
         nextIf errno
@@ -362,28 +398,74 @@ proc loop(eq: var EventQueue; runtime: var RuntimeObj): cint =
         runtime.error = RuntimeError.newException $strerror(errno)
         nextIf errno
     of HaltPhase:
+      if result == 0:
+        result = 1
       if runtime.flags.enable Halted:
         checkWake wakeMask(runtime.flags, <<Halted)
       when insideoutRenameThread:
         discard pthread_setname_np(runtime.handle, "io: halted")
-      if result == 0:
-        result = 1
       inc phase
     of ExitPhase:
       break
 
-proc newSignalHandler*(runtime: Runtime) {.cps: Continuation.} =
+template spawnCheck(err: cint): untyped =
+  {.line: instantiationInfo(fullPaths=true).}:
+    let e = err
+    if e != 0:
+      raise SpawnError.newException: $strerror(e)
+
+template checkSig(err: cint): untyped =
+  {.line: instantiationInfo(fullPaths=true).}:
+    if err.cint == -1:
+      raise RuntimeError.newException $strerror(errno)
+
+proc ignore(sig: cint) {.noconv.} =
+  discard
+
+proc setupInterrupts*() {.raises: [RuntimeError].} =
+  ## make sure we can interrupt system calls with some obvious
+  ## default signals as well as our custom interruption signal
+  for sig in unmaskedSignals.items:
+    checkSig siginterrupt(sig, 1.cint)
+  var sa: Sigaction
+  checkSig sigemptyset(sa.sa_mask)
+  sa.sa_flags = 0
+  sa.sa_handler = ignore
+  checkSig sigaction(insideoutInterruptSignal, sa, nil)
+
+proc initSignalFd*(mask: Sigset): Fd {.raises: [RuntimeError].} =
+  ## create a new signal file descriptor
+  result = signalfd(invalidFd, addr mask, SFD_NONBLOCK or SFD_CLOEXEC)
+  if invalidFd == result:
+    raise RuntimeError.newException: $strerror(errno)
+
+proc signalMask*(): Sigset {.raises: [RuntimeError].} =
+  let flags = SFD_NONBLOCK or SFD_CLOEXEC
+  if 0 != sigfillset(result):
+    raise RuntimeError.newException "unable to compose signal mask"
+  for sig in unmaskedSignals.items:
+    if 0 != sigdelset(result, sig):
+      raise RuntimeError.newException "unable to compose signal mask"
+  once:
+    setupInterrupts()  # bug; raises SpawnError
+
+proc signalMask(runtime: var RuntimeObj): Sigset {.raises: [RuntimeError].} =
+  signalMask()
+
+proc newSignalHandler*(runtime: Runtime; fd: Fd) {.cps: Continuation.} =
   while true:
     coop()
-    var info = readSigInfo(runtime[].signals)
-    echo getThreadId(), ": ", repr(info)
+    var info = fd.readSigInfo()
     case info.ssi_signo.cint
-    of SIGQUIT:
+    of SIGINT:
+      # if we're here, well, mission accomplished
+      discard
+    of SIGTERM, SIGQUIT:
       halt runtime
     of SIGCONT:
-      resume runtime
+      thaw runtime
     else:
-      echo getThreadId(), ": ignore ", info.name
+      echo getThreadId(), ": ignore ", repr(info)
       discard
     dismiss()
 
@@ -397,7 +479,9 @@ proc dispatcher(runtime: sink Runtime): cint =
     stdmsg().writeLine:
       renderError(RuntimeError.newException "unable to enable cancellation")
   else:
-    var handler = whelp newSignalHandler(runtime)
+    var mask = signalMask(runtime[])
+    runtime[].signals = initSignalFd(mask)
+    var handler = whelp newSignalHandler(runtime, runtime[].signals)
     withNewEventQueue eq:
       if runtime[].signals != invalidFd:
         discard eq.register(handler, runtime[].signals, {Edge, Read})
@@ -429,48 +513,15 @@ proc thread(p: pointer): pointer {.noconv.} =
     discard dispatcher(move runtime)
     pthread_cleanup_pop(0)
 
-template spawnCheck(err: cint): untyped =
-  let e = err
-  if e != 0:
-    raise SpawnError.newException: $strerror(e)
-
-proc ignore(sig: cint) {.noconv.} =
-  discard
-
-proc setupInterrupts*() =
-  ## make sure we can interrupt system calls with some obvious
-  ## default signals as well as our custom interruption signal
-  for sig in unmaskedSignals.items:
-    spawnCheck siginterrupt(sig, 1.cint)
-  var sa: Sigaction
-  spawnCheck sigemptyset(sa.sa_mask)
-  sa.sa_flags = 0
-  sa.sa_handler = ignore
-  spawnCheck sigaction(insideoutInterruptSignal, sa, nil)
-
-proc initSignals(runtime: var RuntimeObj): Sigset =
-  let flags = SFD_NONBLOCK or SFD_CLOEXEC
-  spawnCheck sigfillset(result)
-  for sig in unmaskedSignals.items:
-    spawnCheck sigdelset(result, sig)
-  once:
-    setupInterrupts()
-
-  runtime.signals = signalfd(invalidFd, addr result, flags)
-  if invalidFd == runtime.signals:
-    raise SpawnError.newException: $strerror(errno)
-
-proc boot(runtime: var RuntimeObj; flags = <<!Linked;
-          size = insideoutStackSize) {.raises: [SpawnError].} =
+proc boot(runtime: var RuntimeObj; size = insideoutStackSize)
+  {.raises: [SpawnError, RuntimeError].} =
   ## perform remaining setup of the runtime and boot the thread
-  let mask = initSignals runtime
-  let flags = flags or bootFlags
+  let mask = signalMask runtime
   var attr {.noinit.}: PThreadAttr
   spawnCheck pthread_attr_init(addr attr)
   spawnCheck pthread_attr_setsigmask_np(addr attr, addr mask)
   spawnCheck pthread_attr_setdetachstate(addr attr, PTHREAD_CREATE_DETACHED)
   spawnCheck pthread_attr_setstacksize(addr attr, size.cint)
-  put(runtime.flags, flags)
   runtime.parent = pthread_self()
   try:
     spawnCheck pthread_create(addr runtime.handle, addr attr, thread,
@@ -479,10 +530,11 @@ proc boot(runtime: var RuntimeObj; flags = <<!Linked;
     raise SpawnError.newException $e.name & ": " & e.msg
   spawnCheck pthread_attr_destroy(addr attr)
   # wait until the thread is done booting
-  while get(runtime.flags) && <<Boot:
+  var flags = get runtime.flags
+  while flags && <<Boot:
     var err =
       try:
-        checkWait wait(runtime.flags, flags)
+        checkWait waitMask(runtime.flags, flags, <<!Boot or <<Teardown)
       except FutexError as e:
         raise SpawnError.newException e.msg
         errno
@@ -493,24 +545,9 @@ proc boot(runtime: var RuntimeObj; flags = <<!Linked;
       raise SpawnError.newException "timeout waiting for thread to boot"
     else:
       raise SpawnError.newException "unexpected futex errno: " & $err
+    flags = get runtime.flags
     if flags && <<{Boot, Teardown}:
       raise SpawnError.newException "thread crashed during boot"
-
-proc spawn*(continuation: sink Continuation): Runtime =
-  ## run the continuation in another thread
-  new result
-  result[].continuation = continuation
-  boot(result[], flags = <<!Linked)
-
-proc link*(continuation: sink Continuation): Runtime =
-  ## run the continuation in another thread;
-  ## a failure in the child will propogate to the parent
-  new result
-  result[].continuation = continuation
-  boot(result[], flags = <<Linked)
-
-template spawn*(factory: Callback; mailbox: Mailbox): Runtime =
-  spawn factory.call(mailbox)
 
 proc pinToCpu*(runtime: Runtime; cpu: Natural) =
   ## assign a runtime to a specific cpu index
@@ -527,9 +564,66 @@ proc signal*(runtime: Runtime; sig: int): bool {.discardable.} =
 
 proc eject*(runtime: Runtime): Continuation {.discardable.} =
   ## remove the continuation from a runtime;
-  ## blocks until the continuation is safely ejected.
-  if waitForFlags(runtime[], <<!Running):
-    result = move runtime[].continuation
+  ## blocks until the continuation is safely ejected
+  ## and leaves the runtime in a Frozen state.
+  freeze runtime
+  if waitForFlags(runtime[], AllFlags, <<!Running):
+    withLock runtime[].lock:
+      result = move runtime[].continuation
   else:
     raise ValueError.newException:
-      "runtime must be halted and not running to eject continuation"
+      "cannot eject continuation from running runtime"
+
+proc init(runtime: var RuntimeObj; continuation: sink Continuation) =
+  init runtime.linked
+  initLock runtime.lock
+  runtime.continuation = move continuation
+  runtime.signals = invalidFd
+  put(runtime.flags, bootFlags)
+
+proc link1(parent, child: AtomicRef[RuntimeObj]) =
+  ## link two runtimes; a failure of
+  ## the parent will halt the child
+  if parent.flags && <<!Teardown:  # XXX: allow in Teardown?
+    link1(parent[].linked, child):
+      if parent[].flags.enable Linked:
+        checkWake wakeMask(parent[].flags, <<Linked)
+
+proc unlink1(parent, child: AtomicRef[RuntimeObj]) =
+  ## unlink a child from the parent; a failure of
+  ## the child will have no effect on the parent
+  if parent.flags && <<!Teardown:  # XXX: allow in Teardown?
+    unlink1(parent[].linked, child):
+      discard
+  # XXX: keep the lock?
+  ifEmpty parent[].linked:
+    if parent[].flags.disable Linked:
+      checkWake wakeMask(parent[].flags, <<!Linked)
+
+proc link*(a, b: Runtime) =
+  ## link two runtimes; a failure of either will halt the other
+  if a == b: raise ValueError.newException "cannot link a runtime to itself"
+  link1(a, b)
+  link1(b, a)
+
+proc unlink*(a, b: Runtime) =
+  ## unlink two linked runtimes; each may fail independently
+  if a == b: return
+  unlink1(a, b)
+  unlink1(b, a)
+
+proc spawn*(continuation: sink Continuation): Runtime =
+  ## run the continuation in another thread
+  new result
+  result[].init(continuation)
+  boot result[]
+
+proc spawnLink*(runtime: Runtime; continuation: sink Continuation): Runtime =
+  ## run the continuation in another thread; link it to `runtime`
+  new result
+  result[].init(continuation)
+  link(runtime, result)
+  boot result[]
+
+template spawn*(factory: Callback; mailbox: Mailbox): Runtime =
+  spawn factory.call(mailbox)

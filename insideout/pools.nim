@@ -1,6 +1,5 @@
 # TODO: turn this into a continuation
 #       remove the lock
-import std/lists
 import std/rlocks
 
 import pkg/cps

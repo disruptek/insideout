@@ -2,7 +2,6 @@ import std/atomics
 import std/strutils
 
 import insideout/spec
-import insideout/futexes
 import insideout/valgrind
 
 type

@@ -2,7 +2,6 @@
 import std/atomics
 import std/genasts
 import std/macros
-import std/strutils
 
 import insideout/spec
 import insideout/futexes

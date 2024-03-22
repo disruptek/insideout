@@ -3,7 +3,6 @@ import std/hashes
 import std/os
 import std/posix
 import std/sets
-import std/strformat
 import std/strutils
 
 import pkg/cps
