@@ -20,31 +20,33 @@ proc guard(L: ptr Lock) {.cps: Continuation.} =
   sleep 1.0
   fail "guard reached completion"
 
+template linkTest(body: untyped): untyped =
+  # we'll use a lock to impose a total order on the two runtimes
+  var L {.inject.}: Lock
+  var parent {.inject.}: Runtime
+  var kid {.inject.}: Runtime
+  initLock L
+  defer: deinitLock L
+  withLock L:
+    body
+  join kid
+  join parent
+  check kid.flags && <<Halted
+  check parent.flags && <<Halted
+
 proc main =
   suite "linked runtimes":
-    # we'll use a lock to impose a total order on the two runtimes
-    var L: Lock
-    initLock L
-    var parent, kid: Runtime
     block:
       ## spawn; spawn; link
-      withLock L:
+      linkTest:
         parent = spawn: whelp guard(addr L)
         kid = spawn: whelp child(addr L, "unhappy")
         link(parent, kid)
-      join kid
-      join parent
-      check kid.flags && <<Halted
-      check parent.flags && <<Halted
 
     block:
       ## spawn; spawnLink
-      withLock L:
+      linkTest:
         parent = spawn: whelp guard(addr L)
         kid = parent.spawnLink: whelp child(addr L, "unhappy")
-      join kid
-      join parent
-      check kid.flags && <<Halted
-      check parent.flags && <<Halted
 
 main()
