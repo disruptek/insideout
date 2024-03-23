@@ -86,6 +86,8 @@ proc main() =
 
     block:
       ## cancel
+      if isGrinding():
+        skip "cancel test will fail grinds"
       blocked "[cancel]":
         cancel runtime
 

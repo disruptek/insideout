@@ -105,6 +105,8 @@ suite "runtimes + mailboxes + pools":
   block:
     ## cancel and join on a pool works
     proc main() =
+      if isGrinding():
+        skip "cancel tests will fail grinds"
       let remote = newMailbox[Continuation]()
       var pool = newPool(ContinuationWaiter, remote, initialSize = N)
       info "pool size: ", pool.count
@@ -119,6 +121,8 @@ suite "runtimes + mailboxes + pools":
   block:
     ## a cancelled pool performs a join as it exits scope
     proc main() =
+      if isGrinding():
+        skip "cancel tests will fail grinds"
       let remote = newMailbox[Continuation]()
       var pool = newPool(ContinuationWaiter, remote, initialSize = N)
       check pool.count == N

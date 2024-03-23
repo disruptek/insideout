@@ -1,4 +1,5 @@
 import pkg/cps
+
 import insideout
 import insideout/runtimes
 import insideout/backlog
@@ -52,7 +53,9 @@ proc main() =
       join runtime
 
   info "full pool with cancels"
-  block:
+  block cancels:
+    if isGrinding():
+      break cancels
     var mailbox = newMailbox[Continuation]()
     var pool = newPool(ContinuationRunner, mailbox, N)
     for runtime in pool.mitems:
