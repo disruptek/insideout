@@ -124,3 +124,8 @@ proc checkWake*(err: cint): cint {.discardable.} =
     raise FutexError.newException $strerror(errno)
   else:
     result = err
+
+proc lastWake*[T](monitor: var Atomic[T]) {.raises: [].} =
+  ## wake all waiters on the flags in order to free any
+  ## queued waiters in kernel space
+  wake monitor

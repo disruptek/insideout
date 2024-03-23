@@ -210,11 +210,14 @@ proc close*(fd: var Fd) =
       discard
     fd = invalidFd
 
-proc destroy[K, V](tree: var AVLTree[K, V]) =
+proc destroy[K, V](tree: var AVLTree[K, V]) {.raises: [].} =
   while tree.len > 0:
-    tree.popMax
+    try:
+      tree.popMax
+    except ValueError: # tree is empty
+      break
 
-proc deinit(eq: var EventQueueObj) =
+proc deinit(eq: var EventQueueObj) {.raises: [].} =
   # close epollfd
   close eq.interest
   # clear out the watchers quickly
@@ -225,7 +228,7 @@ proc deinit(eq: var EventQueueObj) =
     when value isnot Fd:
       reset value
 
-proc `=destroy`(eq: var EventQueueObj) =
+proc `=destroy`(eq: var EventQueueObj) {.raises: [].} =
   deinit eq
 
 proc deinit*(eq: var EventQueue) =

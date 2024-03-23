@@ -84,13 +84,16 @@ proc signal*(pool: Pool; sig: int) =
   assert not pool.isNil
   signal(pool[], sig)
 
-proc `=destroy`(pool: var PoolObj) =
+proc `=destroy`(pool: var PoolObj) {.raises: [].} =
   debug "destroying pool..."
-  if not getCurrentException().isNil:
-    halt pool
-  else:
-    interrupt pool
-  join pool
+  try:
+    if getCurrentException().isNil:
+      interrupt pool
+    else:
+      halt pool
+    join pool
+  except CatchableError:
+    raise Defect.newException "pool destruction error"
   withRLock pool.lock:
     while not pool.list.head.isNil:
       discard drain pool

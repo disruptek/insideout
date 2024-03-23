@@ -187,10 +187,16 @@ withLock L:
 # the reader is running
 
 type Grenade = object
-proc `=destroy`(g: var Grenade) =
+proc `=destroy`(g: var Grenade) {.raises: [].} =
   deinitCond C
   deinitLock L
-  closeWrite queue          # drain the queue and close it
-  halt runtime              # signal the reader to exit
-  join runtime              # wait for the reader to exit
+  try:
+    closeWrite queue        # drain the queue and close it
+  except FutexError as e:
+    raise Defect.newException $e.name & ": " & e.msg
+  try:
+    halt runtime            # signal the reader to exit
+    join runtime            # wait for the reader to exit
+  except CatchableError as e:
+    raise Defect.newException $e.name & ": " & e.msg
 var g {.used.}: Grenade     # pull the pin

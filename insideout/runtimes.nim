@@ -2,6 +2,7 @@ import std/atomics
 import std/hashes
 import std/locks
 import std/posix
+import std/strformat
 import std/strutils
 
 import pkg/cps
@@ -96,6 +97,10 @@ proc signal(runtime: var RuntimeObj; sig: int): bool {.used.} =
   ## send a signal to a runtime; true if successful
   0 == pthread_kill(runtime.handle, sig.cint)
 
+proc signal*(runtime: Runtime; sig: int): bool {.discardable.} =
+  ## send a signal to a runtime; true if successful
+  signal(runtime[], sig)
+
 proc cancel(runtime: var RuntimeObj): bool {.discardable.} =
   ## cancel a runtime; true if successful
   0 == pthread_cancel(runtime.handle)
@@ -173,9 +178,7 @@ proc `=destroy`(runtime: var RuntimeObj) =
   # reset the flags so that the subsequent wake will
   # not be ignored for any reason
   put(runtime.flags, deadFlags)
-  # wake all waiters on the flags in order to free any
-  # queued waiters in kernel space
-  checkWake wake(runtime.flags)
+  lastWake runtime.flags
   reset runtime.linked
   withLock runtime.lock:
     reset runtime.continuation
@@ -220,15 +223,42 @@ template exceptionHandler(e: ref Exception; s: static string): cint =
       renderError(e, s)
     if errno > 0: errno else: 1
 
-proc teardown(p: pointer) {.noconv.} =
+proc haltLinked(runtime: Runtime) {.raises: [].} =
+  ## halt all linked runtimes of `runtime`
+  var peer: Runtime
+  while tryPop(runtime[].linked, peer):
+    try:
+      halt peer
+    except CatchableError as e:
+      signal(peer, SIGQUIT)
+      try:
+        stdmsg().writeLine:
+          fmt"error halting linked peer: {e.name}: {e.msg}"
+      except CatchableError:
+        discard
+
+proc quiesceFlags(runtime: Runtime) {.raises: [].} =
+  ## teardown the flags, leaving Linked and Halted
+  ## in place for any post-mortem
+  let flags = get runtime[].flags
+  var also = (flags and <<Linked) or (flags and <<!Linked)
+  also = also or (flags and <<Halted) or (flags and <<!Halted)
+  put(runtime[].flags, doneFlags or also)
+  lastWake runtime[].flags
+
+proc teardown(p: pointer) {.raises: [], noconv.} =
   ## we receive a pointer to a runtime object and we perform any necessary
-  ## cleanup; this is run during thread destruction
+  ## cleanup; this is run during thread destruction and we can enter from
+  ## normal exit or from a crash/cancellation
   mixin dealloc
   var runtime = cast[Runtime](p)
   # make sure we aren't holding the continuation lock
   if runtime[].flags.disable Running:
     release runtime[].lock
-    checkWake wakeMask(runtime[].flags, <<!Running)
+    try:
+      checkWake wakeMask(runtime[].flags, <<!Running)
+    except FutexError as e:
+      raise Defect.newException $e.name & ": " & e.msg
   try:
     # it seems like the right move is to render the runtime
     # inoperable and let another owner actually dealloc us.
@@ -244,21 +274,8 @@ proc teardown(p: pointer) {.noconv.} =
         const cErrorMsg = "destroying continuation;"
         discard e.exceptionHandler cErrorMsg
   finally:
-    # it's time to quiesce the flags, leaving Linked and Halted
-    # in place for any post-mortem.  this is where we will halt
-    # any linked runtimes.
-    let flags = get runtime[].flags
-    var also = (flags and <<Linked) or (flags and <<!Linked)
-    also = also or (flags and <<Halted) or (flags and <<!Halted)
-    put(runtime[].flags, doneFlags or also)
-    # wake all waiters on the flags in order to free any queued
-    # waiters in kernel space
-    checkWake wake(runtime[].flags)
-    # perform the halts of any linked peers
-    if (also && <<Halted) and (also && <<Linked):
-      var peer: Runtime
-      while tryPop(runtime[].linked, peer):
-        halt peer
+    runtime.quiesceFlags()     # set flags for any post-mortem
+    runtime.haltLinked()       # halt any linked runtimes
 
 template mayCancel(r: typed; body: typed): untyped {.used.} =
   var prior: cint
@@ -560,10 +577,6 @@ proc pinToCpu*(runtime: Runtime; cpu: Natural) =
 proc handle*(runtime: Runtime): PThread =
   withRunning runtime:
     runtime[].handle
-
-proc signal*(runtime: Runtime; sig: int): bool {.discardable.} =
-  ## send a signal to a runtime; true if successful
-  signal(runtime[], sig)
 
 proc eject*(runtime: Runtime): Continuation {.discardable.} =
   ## remove the continuation from a runtime;

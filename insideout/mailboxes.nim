@@ -10,6 +10,8 @@ import pkg/loony
 
 import insideout/spec
 import insideout/futexes
+export FutexError
+
 import insideout/atomic/flags
 import insideout/atomic/refs
 export refs
@@ -114,16 +116,14 @@ proc destruct[T](mail: var MailboxObj[T]) =
   store(mail.readers, 0, order = moSequentiallyConsistent)
   store(mail.writers, 0, order = moSequentiallyConsistent)
 
-proc `=destroy`*(mail: var MailboxObj[void]) =
+proc `=destroy`(mail: var MailboxObj[void]) {.raises: [].} =
   # reset the flags so that the subsequent wake will
   # not be ignored for any reason
   put(mail.state, voidFlags)
-  # wake all waiters on the flags in order to free any
-  # queued waiters in kernel space
-  checkWake wake(mail.state)
+  lastWake mail.state
   destruct mail
 
-proc `=destroy`*[T: not void](mail: var MailboxObj[T]) =
+proc `=destroy`[T: not void](mail: var MailboxObj[T]) =
   # reset the flags so that the subsequent wake will
   # not be ignored for any reason
   let flags = get mail.state
@@ -131,9 +131,7 @@ proc `=destroy`*[T: not void](mail: var MailboxObj[T]) =
     put(mail.state, boundedFlags)
   else:
     put(mail.state, unboundedFlags)
-  # wake all waiters on the flags in order to free any
-  # queued waiters in kernel space
-  checkWake wake(mail.state)
+  lastWake mail.state
   destruct mail
   when insideoutSafeMode:
     withRLock mail.lock:
