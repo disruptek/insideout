@@ -20,7 +20,7 @@ let N =
   else:
     1
 
-const secs = 0.05
+const secs = 0.10
 const delay = 0
 
 type
