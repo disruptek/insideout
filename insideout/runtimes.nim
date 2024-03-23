@@ -447,7 +447,7 @@ proc signalMask*(): Sigset {.raises: [RuntimeError].} =
     if 0 != sigdelset(result, sig):
       raise RuntimeError.newException "unable to compose signal mask"
   once:
-    setupInterrupts()  # bug; raises SpawnError
+    setupInterrupts()
 
 proc signalMask(runtime: var RuntimeObj): Sigset {.raises: [RuntimeError].} =
   signalMask()
