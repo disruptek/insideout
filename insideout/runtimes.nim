@@ -367,8 +367,9 @@ proc loop(eq: var EventQueue; runtime: var RuntimeObj): cint =
             ExitPhase
           else:
             CheckState
-        when defined(isNimSkull):
-          echo "nimskull bug #", 0.toHex
+        when defined(isNimSkull): # insane bug workaround
+          discard $phase
+          if false: raise Defect.newException ""
       except CatchableError as e:
         result = exceptionHandler(e, "dispatcher crash;")
         phase = HaltPhase
