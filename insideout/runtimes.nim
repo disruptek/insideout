@@ -226,7 +226,9 @@ proc teardown(p: pointer) {.noconv.} =
   mixin dealloc
   var runtime = cast[Runtime](p)
   # make sure we aren't holding the continuation lock
-  release runtime[].lock
+  if runtime[].flags.disable Running:
+    release runtime[].lock
+    checkWake wakeMask(runtime[].flags, <<!Running)
   try:
     # it seems like the right move is to render the runtime
     # inoperable and let another owner actually dealloc us.
