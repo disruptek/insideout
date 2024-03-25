@@ -183,6 +183,7 @@ proc `=destroy`(runtime: var RuntimeObj) =
   withLock runtime.lock:
     reset runtime.continuation
     reset runtime.error
+  close runtime.signals
   deinitLock runtime.lock
 
 proc renderError(e: ref Exception; s = "crash;"): string =
