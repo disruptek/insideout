@@ -23,16 +23,17 @@ proc guard(L: ptr Lock) {.cps: Continuation.} =
 template linkTest(body: untyped): untyped =
   # we'll use a lock to impose a total order on the two runtimes
   var L {.inject.}: Lock
-  var parent {.inject.}: Runtime
-  var kid {.inject.}: Runtime
   initLock L
   defer: deinitLock L
-  withLock L:
-    body
-  join kid
-  join parent
-  check kid.flags && <<Halted
-  check parent.flags && <<Halted
+  var parent {.inject.}: Runtime
+  block:
+    var kid {.inject.}: Runtime
+    withLock L:
+      body
+    join kid
+    join parent
+    check kid.flags && <<Halted
+    check parent.flags && <<Halted
 
 proc main =
   suite "linked runtimes":

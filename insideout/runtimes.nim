@@ -56,6 +56,22 @@ const deadFlags = <<Dead or <<!{Boot, Teardown, Frozen, Running, Halted, Linked}
 const bootFlags = <<Boot or <<!{Dead, Teardown, Frozen, Running, Halted}
 const doneFlags = <<Teardown or <<!{Dead, Boot, Frozen, Running}
 
+proc `=destroy`(runtime: var RuntimeObj) {.raises: [].} =
+  # reset the flags so that the subsequent wake will
+  # not be ignored for any reason
+  mixin disarm
+  mixin reset
+  put(runtime.flags, deadFlags)
+  lastWake runtime.flags
+  reset runtime.linked
+  withLock runtime.lock:
+    if not runtime.continuation.isNil:
+      disarm runtime.continuation
+      reset runtime.continuation
+    reset runtime.error
+  close runtime.signals
+  deinitLock runtime.lock
+
 proc `=copy`*(runtime: var RuntimeObj; other: RuntimeObj) {.error.} =
   ## copies are denied
   discard
@@ -173,18 +189,6 @@ proc cancel*(runtime: Runtime): bool {.discardable.} =
   ## cancel a runtime; true if successful.
   ## always succeeds if the runtime is not running.
   cancel runtime[]
-
-proc `=destroy`(runtime: var RuntimeObj) =
-  # reset the flags so that the subsequent wake will
-  # not be ignored for any reason
-  put(runtime.flags, deadFlags)
-  lastWake runtime.flags
-  reset runtime.linked
-  withLock runtime.lock:
-    reset runtime.continuation
-    reset runtime.error
-  close runtime.signals
-  deinitLock runtime.lock
 
 proc renderError(e: ref Exception; s = "crash;"): string =
   result = newStringOfCap(16 + s.len + e.name.len + e.msg.len)
@@ -390,6 +394,9 @@ proc loop(eq: var EventQueue; runtime: var RuntimeObj): cint =
           discard $phase
           if false: raise Defect.newException ""
       except CatchableError as e:
+        if not runtime.continuation.isNil:
+          if not runtime.continuation.ex.isNil:
+            reset runtime.continuation.ex
         result = exceptionHandler(e, "dispatcher crash;")
         phase = HaltPhase
     of FreezePhase: # we're entering the frozen state
