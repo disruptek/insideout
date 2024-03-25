@@ -32,18 +32,18 @@ suite "event queue":
     # run the continuation.
     var zzz: Atomic[int]
     proc snooze(eq: EventQueue) {.cps: Continuation.} =
-      eq.sleep(0.2)
+      eq.sleep(0.05)
       zzz.store(1)
       checkpoint "yawn"
 
     proc main =
       withNewEventQueue eq:
         var runtime = spawn: whelp snooze(eq)
-        join runtime
         var events: array[1, epoll_event]
         let n = eq.wait(events)
         if n > 0:
           eq.run(events, n)
           check 1 == zzz.load
           eq.pruneOneShots(events, n)
+        join runtime
     main()

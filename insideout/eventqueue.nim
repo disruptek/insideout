@@ -37,8 +37,6 @@ type
     interest: Fd
     registry: Registry
     watchers: Watchers
-    interrupt: Fd
-    interruptId: Id
     nextId: Atomic[uint64]
 
   EventQueue* = AtomicRef[EventQueueObj]
@@ -212,15 +210,16 @@ proc close*(fd: var Fd) =
       discard
     fd = invalidFd
 
-proc destroy[K, V](tree: var AVLTree[K, V]) =
+proc destroy[K, V](tree: var AVLTree[K, V]) {.raises: [].} =
   while tree.len > 0:
-    tree.popMax
+    try:
+      tree.popMax
+    except ValueError: # tree is empty
+      break
 
-proc deinit(eq: var EventQueueObj) =
+proc deinit(eq: var EventQueueObj) {.raises: [].} =
   # close epollfd
   close eq.interest
-  # close interrupt eventfd
-  close eq.interrupt
   # clear out the watchers quickly
   reset eq.watchers
   # destroy queued continuations in reverse order
@@ -229,7 +228,7 @@ proc deinit(eq: var EventQueueObj) =
     when value isnot Fd:
       reset value
 
-proc `=destroy`(eq: var EventQueueObj) =
+proc `=destroy`(eq: var EventQueueObj) {.raises: [].} =
   deinit eq
 
 proc deinit*(eq: var EventQueue) =
@@ -334,6 +333,7 @@ proc register(eq: var EventQueueObj; c: sink Continuation;
   var ev = composeEvent(eq, events)
   var record =
     Record(c: c, id: ev.id, fd: fd, mask: ev.events, events: events)
+  # FIXME: defend
   try:
     eq.addRegistry record
     checkErr epoll_ctl(eq.interest, EPOLL_CTL_ADD, fd, addr ev)
@@ -357,37 +357,22 @@ proc surrender(c: sink Continuation; eq: EventQueue;
   unregister(eq[], id)
   result = c
 
-proc waitForInterrupt(c: sink Continuation): Continuation {.cpsMagic.} =
-  result = nil
-
-proc interruptor(eq: EventQueue) {.cps: Continuation.} =
-  var i = 0
-  while true:
-    inc i
-    waitForInterrupt()
-
-proc init(eq: var EventQueueObj; interruptor: sink Continuation) =
-  ## initialize the eventqueue with the given interruptor
+proc init(eq: var EventQueueObj) =
+  ## initialize the eventqueue
   eq.interest = checkErr epoll_create(O_CLOEXEC)
   assert eq.interest != invalidFd
   # ensure the first id != invalidId
   discard fetchAdd(eq.nextId, 1, order = moAcquireRelease)
-  when false:
-    eq.interrupt = eventfd(0, O_NONBLOCK or O_CLOEXEC)
-    eq.interruptId = register(eq, interruptor, eq.interrupt, {Read, Edge})
-    assert eq.interruptId in eq.registry
-  else:
-    eq.interrupt = invalidFd
 
 proc init*(eq: var EventQueue) =
   if eq.isNil:
     new eq
-    when false:
-      var c = whelp interruptor(eq)
-      eq[].init(c)
-    else:
-      eq[].init(nil)
+    init eq[]
   assert eq[].interest != invalidFd
+
+proc initEventQueue*(): EventQueue =
+  ## return an initialized eventqueue
+  init result
 
 proc toSet(event: epoll_event): set[Event] =
   ## some liberties taken here for the composition reasons

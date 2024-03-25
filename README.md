@@ -2,14 +2,19 @@
 
 This is an experimental concurrency runtime for Nim.
 
-The basic conceit is that it's easier to move continuations
-from thread to thread than it is to move arbitrary data.
-
 [![Test Matrix](https://github.com/disruptek/insideout/workflows/CI/badge.svg)](https://github.com/disruptek/insideout/actions?query=workflow%3ACI)
 [![GitHub release (latest by date)](https://img.shields.io/github/v/release/disruptek/insideout?style=flat)](https://github.com/disruptek/insideout/releases/latest)
 ![Minimum supported Nim version](https://img.shields.io/badge/nim-1.9.3-informational?style=flat&logo=nim)
 [![License](https://img.shields.io/github/license/disruptek/insideout?style=flat)](#license)
 [![IRC](https://img.shields.io/badge/chat-%23%23disruptek%20on%20libera.chat-brightgreen?style=flat)](https://web.libera.chat/##disruptek)
+
+We think it's easier to move continuations from thread to thread than it is
+to move arbitrary data. We offer API that lets you imperatively move your
+continuation to other thread pools without any locking or copies.
+
+This experiment has expanded to support detached threads, channels with
+backpressure, lock-free queues, and a "local" event queue for I/O and signal
+handling.
 
 ## Goals
 
@@ -30,11 +35,22 @@ from thread to thread than it is to move arbitrary data.
 
 Adequate.
 
+Inside a single thread, concurrency is cooperative and lock-free, so if you
+don't yield to the dispatcher, your continuation may only be interrupted by a
+signal from another thread. At present, the only occasions for interruption are
+when you call `halt()` on a thread, or use the pause/resume functions named
+`freeze()` and `thaw()`.
+
 ## Efficiency
 
 Empty continuations are 40-bytes each.  Queue overhead is 10-bytes per object.
-One billion queued continuations thus occupies 50gb of memory.  Executing
-1,000,000,000 unique continuations on my 32-thread machine takes ~3 seconds.
+One billion queued continuations thus occupies 50gb of memory.
+
+Toys are starting to run a little more slowly due to overhead from things like
+thread cancellation, signal handling and, more generally, the event queue.
+
+That said, the tests demonstrate using the (richest) API to run millions of
+continuations per second on modern desktop hardware.
 
 ## Support
 

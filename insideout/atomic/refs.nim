@@ -2,7 +2,6 @@ import std/atomics
 import std/strutils
 
 import insideout/spec
-import insideout/futexes
 import insideout/valgrind
 
 type
@@ -26,7 +25,7 @@ proc debug[T](arc: AtomicRef[T]; s: string; m: string) =
       if not arc.reference.isNil:
         checkpoint s & ":", T, cast[int](arc.reference).toHex.toLowerAscii, m
 
-proc `=destroy`*[T](arc: var AtomicRef[T]) =
+proc `=destroy`[T](arc: var AtomicRef[T]) {.raises: [].} =
   mixin `=destroy`
   if not arc.reference.isNil:
     let n = fetchSub(arc.reference[].rc, 1, order = moSequentiallyConsistent)
