@@ -9,6 +9,7 @@ macro timeh(n: untyped): untyped = importer(n, newLit"<time.h>")
 
 let CLOCK_REALTIME_COARSE* {.timeh.}: ClockId
 let CLOCK_MONOTONIC_COARSE* {.timeh.}: ClockId
+let CLOCK_BOOTTIME* {.timeh.}: ClockId
 
 export ClockId, CLOCK_MONOTONIC, CLOCK_REALTIME,
        CLOCK_THREAD_CPUTIME_ID, CLOCK_PROCESS_CPUTIME_ID

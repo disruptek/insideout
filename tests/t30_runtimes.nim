@@ -12,22 +12,32 @@ import insideout/atomic/flags
 
 let N =
   if getEnv"GITHUB_ACTIONS" == "true" or not defined(danger) or isGrinding():
-    10_000
+    1_000
   else:
-    100_000
+    10_000
 
 type
   Server = ref object of Continuation
   Job = ref object
 
+var began, recvd, ended: Atomic[bool]
+
 proc unblocking(jobs: Mailbox[Job]) {.cps: Server.} =
   ## non-blocking receive
+  coop()
+  began.store(true)
   debug "service began"
   var job: Job
-  while Received != jobs.tryRecv(job):
-    if not jobs.waitForPoppable:
-      break
+  while true:
+    case jobs.tryRecv(job)
+    of Received:
+      recvd.store(true)
+      debug "service received"
+    else:
+      if not jobs.waitForPoppable:
+        break
   debug "service ended"
+  ended.store(true)
 
 const Unblocking = whelp unblocking
 
@@ -54,6 +64,60 @@ proc main() =
     info "[runtime] join"
     join runtime
     info "[runtime] done"
+
+  block:
+    ## spawn frozen
+    began.store(false)
+    ended.store(false)
+    info "flags: frozen"
+    let jobs = newMailbox[Job]()
+    info "[frozen] spawn"
+    var runtime = Unblocking.spawn(jobs, {StartFrozen})
+    doAssert runtime.flags && <<Frozen
+    while runtime.flags && <<Boot:
+      discard
+    var job = Job()
+    info "[frozen] send"
+    while Delivered != jobs.trySend(job):
+      discard
+    info "[frozen] close"
+    jobs.closeWrite()
+    info "[frozen] thaw"
+    while runtime.flags && <<!{Teardown, Running}:
+      thaw runtime
+    doAssert runtime.flags && <<!Frozen
+    info "[frozen] join"
+    join runtime
+    info "[frozen] done"
+
+  block:
+    ## spawn fast
+    began.store(false)
+    ended.store(false)
+    info "flags: fast"
+    let jobs = newMailbox[Job]()
+    info "[fast] spawn"
+    var runtime = Unblocking.spawn(jobs, {DenyCancels, SkipPolling})
+    doAssert runtime.flags && <<!{Cancels, Polling}
+    while runtime.flags && <<!Running:
+      discard
+    while not began.load:
+      discard
+    info "[fast] halt"
+    halt runtime
+    when insideoutDeferredCancellation:
+      cancel runtime
+    var job = Job()
+    info "[fast] send"
+    while Delivered != jobs.trySend(job):
+      discard
+    info "[fast] close"
+    jobs.closeWrite()
+    info "[fast] join"
+    join runtime
+    info "[fast] done"
+    doAssert ended.load
+    doAssert recvd.load
 
 for i in 1..N:
   main()

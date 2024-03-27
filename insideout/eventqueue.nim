@@ -477,7 +477,7 @@ proc cancel*(eq: EventQueue; id: Id): bool {.discardable.} =
 
 proc sleep*(eq: EventQueue; timeout: float) {.cps: Continuation.} =
   ## sleep for `timeout` seconds
-  var fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK or TFD_CLOEXEC).Fd
+  var fd = timerfd_create(CLOCK_BOOTTIME, TFD_NONBLOCK or TFD_CLOEXEC).Fd
   var it: itimerspec
   it.it_value = timeout.toTimeSpec
   checkErr timerfd_settime(fd, 0, addr it, nil)
