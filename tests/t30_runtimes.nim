@@ -20,7 +20,7 @@ type
   Server = ref object of Continuation
   Job = ref object
 
-var began, ended: Atomic[bool]
+var began, recvd, ended: Atomic[bool]
 
 proc unblocking(jobs: Mailbox[Job]) {.cps: Server.} =
   ## non-blocking receive
@@ -28,9 +28,14 @@ proc unblocking(jobs: Mailbox[Job]) {.cps: Server.} =
   began.store(true)
   debug "service began"
   var job: Job
-  while Received != jobs.tryRecv(job):
-    if not jobs.waitForPoppable:
-      break
+  while true:
+    case jobs.tryRecv(job)
+    of Received:
+      recvd.store(true)
+      debug "service received"
+    else:
+      if not jobs.waitForPoppable:
+        break
   debug "service ended"
   ended.store(true)
 
@@ -102,20 +107,17 @@ proc main() =
     halt runtime
     when insideoutDeferredCancellation:
       cancel runtime
-    when true:
-      var job = Job()
-      info "[fast] send"
-      while Delivered != jobs.trySend(job):
-        discard
-      doAssert runtime.flags && <<Running
-    else:
-      doAssert runtime.flags && <<Running
+    var job = Job()
+    info "[fast] send"
+    while Delivered != jobs.trySend(job):
+      discard
     info "[fast] close"
     jobs.closeWrite()
     info "[fast] join"
     join runtime
     info "[fast] done"
     doAssert ended.load
+    doAssert recvd.load
 
 for i in 1..N:
   main()
