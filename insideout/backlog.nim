@@ -63,23 +63,17 @@ const logLevel* =  ## default log level
     lvlInfo
 
 template debug*(args: varargs[untyped]) =
-  if logLevel <= lvlDebug: log(lvlDebug, args)
+  when logLevel <= lvlDebug: log(lvlDebug, args)
 template info*(args: varargs[untyped]) =
-  if logLevel <= lvlInfo: log(lvlInfo, args)
+  when logLevel <= lvlInfo: log(lvlInfo, args)
 template notice*(args: varargs[untyped]) =
-  if logLevel <= lvlNotice: log(lvlNotice, args)
+  when logLevel <= lvlNotice: log(lvlNotice, args)
 template warn*(args: varargs[untyped]) =
-  if logLevel <= lvlWarn: log(lvlWarn, args)
+  when logLevel <= lvlWarn: log(lvlWarn, args)
 template error*(args: varargs[untyped]) =
-  if logLevel <= lvlError: log(lvlError, args)
+  when logLevel <= lvlError: log(lvlError, args)
 template fatal*(args: varargs[untyped]) =
-  if logLevel <= lvlFatal: log(lvlFatal, args)
-
-when false:  # how could this be useful to the user?
-  const
-    LevelNames*: array[Level, string] = [
-      "(ALL)", "DEBUG", "INFO", "NOTICE", "WARN", "ERROR", "FATAL", "(NONE)"
-    ] ## Array of strings representing each logging level.
+  when logLevel <= lvlFatal: log(lvlFatal, args)
 
 proc log*(level: Level; args: varargs[string, `$`])
 
