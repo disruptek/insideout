@@ -104,7 +104,7 @@ proc main(n: int) =
   while true:
     var r = b.tryRecv(x)
     case r
-    of Empty: break
+    of Empty, Unreadable: break
     of Received:
       debug "extra ", x[]
       inc e

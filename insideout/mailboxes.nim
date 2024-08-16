@@ -472,10 +472,10 @@ proc tryRecv*[T](mail: Mailbox[T]; item: var T): MailFlag =
     Paused
   elif state && <<!Readable:
     Unreadable
-  elif state && <<Empty and mail.len == 0:
-    Empty
   elif state && <<!Writable and mail.len == 0:
     Unreadable                # empty and unwritable; go away
+  elif state && <<Empty and mail.len == 0:
+    Empty
   else:
     mail.performPop(item)
 
