@@ -26,7 +26,7 @@ macro flagType*(flag: enum): untyped =
 
 macro `<<`*[V: enum](flag: V): untyped =
   let shift = flag.intVal
-  genAstOpt({}, v=getType(flag), shift=newLit(shift)):
+  genAstOpt({}, v=V, shift=newLit(shift)):
     when sizeof(v) <= 1:
       1'u16 shl shift
     elif sizeof(v) <= 2:
@@ -35,7 +35,7 @@ macro `<<`*[V: enum](flag: V): untyped =
       {.error: "supported flag sizes are 1 and 2 bytes".}
 
 macro `<<!`*[V: enum](flag: V): untyped =
-  genAstOpt({}, v=getType(flag), flag):
+  genAstOpt({}, v=V, flag):
     (<< flag) shl (8 * sizeof(v))
 
 macro `<<`*[V: enum](flags: set[V]): untyped =
@@ -45,7 +45,7 @@ macro `<<`*[V: enum](flags: set[V]): untyped =
   if sum == 0:
     return newLit(0)
   result =
-    genAstOpt({}, v=getType(flags)[^1][^1], sum=newLit(sum)):
+    genAstOpt({}, v=V, sum=newLit(sum)):
       when sizeof(v) <= 1:
         uint16(sum)
       elif sizeof(v) <= 2:
@@ -54,7 +54,7 @@ macro `<<`*[V: enum](flags: set[V]): untyped =
         {.error: "supported flag sizes are 1 and 2 bytes".}
 
 macro `<<!`*[V: enum](flags: set[V]): untyped =
-  genAstOpt({}, v=getType(flags)[^1][^1], flags):
+  genAstOpt({}, v=V, flags):
     (<< flags) shl (8 * sizeof(v))
 
 proc `||`*[T: FlagsInts](a, b: T): T =
