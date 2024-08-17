@@ -59,7 +59,8 @@ jobs:
           #- name: nim
           #  version: devel
           - name: nimskull
-            version: "0.1.0-dev.21267"
+            #version: "0.1.0-dev.21267"
+            version: "*"
 
     name: '${{ matrix.os }} (${{ matrix.compiler.name }} ${{ matrix.compiler.version }})'
     runs-on: ${{ matrix.os }}
