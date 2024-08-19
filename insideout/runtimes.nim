@@ -430,10 +430,6 @@ proc loop(eq: var EventQueue; runtime: var RuntimeObj): cint =
             ExitPhase
           else:
             CheckState
-        when defined(isNimSkull):
-          {.warning: "rm insane bug workaround".}
-          discard $phase
-          if false: raise Defect.newException ""
       except CatchableError as e:
         if not runtime.continuation.isNil:
           if not runtime.continuation.ex.isNil:
