@@ -129,17 +129,24 @@ jobs:
         env:
           NIM: ${{ matrix.compiler.name }}
 
-      - name: Locked Tests
+      - name: Locked Tests (clang)
         run: |
           balls --path="." --define:insideoutSafeMode=on \
-                --backend:c --panics:on \
+                --cc:clang --backend:c --panics:on \
                 --mm:arc --define:useMalloc \
                 --define:debug --define:release --define:danger
 
-      - name: Loony Tests
+      - name: Loony Tests (gcc)
         run: |
           balls --path="." --define:insideoutSafeMode=off \
-                --backend:c --panics:on \
+                --cc:gcc --backend:c --panics:on \
+                --mm:arc --define:useMalloc \
+                --define:debug --define:release --define:danger
+
+      - name: Loony Tests (clang)
+        run: |
+          balls --path="." --define:insideoutSafeMode=off \
+                --cc:clang --backend:c --panics:on \
                 --mm:arc --define:useMalloc \
                 --define:debug --define:release --define:danger
 
