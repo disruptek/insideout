@@ -252,11 +252,13 @@ proc isFull*[T](mail: Mailbox[T]): bool =
 proc waitForPushable*[T](mail: Mailbox[T]): bool =
   ## true if the mailbox is pushable, false if it never will be
   let state = get mail[].state
-  if state && <<!Writable:
-    result = false
-  elif state && <<Paused:
+  if state && <<Paused:
     result = true
-    discard mail.performWait(state, <<!{Writable, Paused})
+    discard mail.performWait(state, <<!{Writable, Readable, Paused})
+  elif state && <<!Writable:
+    result = false
+  elif state && <<!Readable:            # it cannot be drained, but
+    result = mail.len < mail.capacity   # can it be filled?
   elif state && <<Full:
     # NOTE: short-circuit when the mailbox is full and unreadable
     result = state && <<Readable
@@ -268,11 +270,13 @@ proc waitForPushable*[T](mail: Mailbox[T]): bool =
 proc waitForPoppable*[T](mail: Mailbox[T]): bool =
   ## true if the mailbox is poppable, false if it never will be
   let state = get mail[].state
-  if state && <<!Readable:
-    result = false
-  elif state && <<Paused:
+  if state && <<Paused:
     result = true
-    discard mail.performWait(state, <<!{Readable, Paused})
+    discard mail.performWait(state, <<!{Readable, Writable, Paused})
+  elif state && <<!Readable:
+    result = false
+  elif state && <<!Writable:            # it cannot be filled, but
+    result = mail.len > 0               # can it be drained?
   elif state && <<Empty:
     # NOTE: short-circuit when the mailbox is empty and unwritable
     result = state && <<Writable
@@ -372,12 +376,14 @@ proc trySend*[T](mail: Mailbox[T]; item: var T): MailFlag =
     if unlikely item.isNil:
       raise ValueError.newException "attempt to send nil"
   let state = get mail[].state
-  if state && <<!Writable:
-    Unwritable
-  elif state && <<Paused:
+  if state && <<Paused:
     Paused
+  elif state && <<!Writable:
+    Unwritable
   elif state && <<Full and mail.len >= mail.capacity:
     Full
+  elif state && <<!Readable and mail.len >= mail.capacity:
+    Unwritable                # full and unreadable; go away
   else:
     mail.performPush(item)
 
@@ -462,12 +468,14 @@ proc tryRecv*[T](mail: Mailbox[T]; item: var T): MailFlag =
   ## non-blocking attempt to pop an item from the mailbox
   assert not mail.isNil
   let state = get mail[].state
-  if state && <<!Readable:
-    Unreadable
-  elif state && <<Paused:
+  if state && <<Paused:
     Paused
+  elif state && <<!Readable:
+    Unreadable
   elif state && <<Empty and mail.len == 0:
     Empty
+  elif state && <<!Writable and mail.len == 0:
+    Unreadable                # empty and unwritable; go away
   else:
     mail.performPop(item)
 
