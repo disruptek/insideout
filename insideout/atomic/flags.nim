@@ -24,38 +24,31 @@ template flagType*(flag: typedesc[enum]): untyped =
 macro flagType*(flag: enum): untyped =
   newCall(bindSym"flagType", newCall(bindSym"typeOf", flag))
 
-macro `<<`*[V: enum](flag: V): untyped =
-  let shift = flag.intVal
-  genAstOpt({}, v=V, shift=newLit(shift)):
-    when sizeof(v) <= 1:
-      1'u16 shl shift
-    elif sizeof(v) <= 2:
-      1'u32 shl shift
-    else:
-      {.error: "supported flag sizes are 1 and 2 bytes".}
+template `<<`*[V: enum](flag: V): untyped =
+  when sizeof(V) <= 1:
+    1'u16 shl int(flag)
+  elif sizeof(V) <= 2:
+    1'u32 shl int(flag)
+  else:
+    {.error: "supported flag sizes are 1 and 2 bytes".}
 
-macro `<<!`*[V: enum](flag: V): untyped =
-  genAstOpt({}, v=V, flag):
-    (<< flag) shl (8 * sizeof(v))
+template `<<!`*[V: enum](flag: V): untyped =
+  (<< flag) shl (8 * sizeof(V))
 
-macro `<<`*[V: enum](flags: set[V]): untyped =
-  var sum: int = 0
-  for child in flags.children:
-    sum = sum + (1 shl child.intVal)
-  if sum == 0:
-    return newLit(0)
-  result =
-    genAstOpt({}, v=V, sum=newLit(sum)):
-      when sizeof(v) <= 1:
-        uint16(sum)
-      elif sizeof(v) <= 2:
-        uint32(sum)
-      else:
-        {.error: "supported flag sizes are 1 and 2 bytes".}
+proc sumFlags[V: enum](flags: set[V]): uint {.compileTime.} =
+  for child in flags.items:
+    result += 1u shl int(child)
 
-macro `<<!`*[V: enum](flags: set[V]): untyped =
-  genAstOpt({}, v=V, flags):
-    (<< flags) shl (8 * sizeof(v))
+template `<<`*[V: enum](flags: set[V]): untyped =
+  when sizeof(V) <= 1:
+    uint16(static sumFlags(flags))
+  elif sizeof(V) <= 2:
+    uint32(static sumFlags(flags))
+  else:
+    {.error: "supported flag sizes are 1 and 2 bytes".}
+
+template `<<!`*[V: enum](flags: set[V]): untyped =
+  (<< flags) shl (8 * sizeof(V))
 
 proc `||`*[T: FlagsInts](a, b: T): T =
   ## (a | b) with a more natural name
