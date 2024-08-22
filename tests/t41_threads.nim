@@ -86,6 +86,7 @@ suite "runtimes + mailboxes + pools":
       let remote = newMailbox[Continuation]()
       var runtime = spawn(ContinuationWaiter, remote)
       check runtime.flags && <<!Boot
+      closeWrite remote
       halter(runtime, 0.1)
     main()
 
@@ -95,6 +96,7 @@ suite "runtimes + mailboxes + pools":
       let remote = newMailbox[Continuation]()
       var runtime = spawn(ContinuationWaiter, remote)
       check runtime.flags && <<!Boot
+      closeWrite remote
       var k = spawn: whelp halter(runtime, 0.1)
       check k.flags && <<!Boot
       join k
@@ -113,6 +115,7 @@ suite "runtimes + mailboxes + pools":
       check pool.count == N
       for runtime in pool.items:
         info runtime
+      closeWrite remote
       cancel pool
       info "join pool: ", pool
       join pool
@@ -126,6 +129,7 @@ suite "runtimes + mailboxes + pools":
       let remote = newMailbox[Continuation]()
       var pool = newPool(ContinuationWaiter, remote, initialSize = N)
       check pool.count == N
+      closeWrite remote
       info "cancel pool: ", pool
       cancel pool
     main()
