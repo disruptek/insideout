@@ -217,7 +217,7 @@ proc newMailbox*[T](): Mailbox[T] =
   else:
     result = newMailbox[T](high uint32)
 
-proc interrupt*[T](mail: Mailbox[T]; count = high(uint32)) =
+proc interrupt*[T](mail: Mailbox[T]; count = high(int32)) =
   ## interrupt some threads waiting on the mailbox
   assert not mail.isNil
   discard mail[].state.enable Interrupt

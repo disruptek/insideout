@@ -88,13 +88,13 @@ proc waitMask*[T](monitor: var Atomic[T]; compare: T; mask: uint32;
       result = sysFutex(addr monitor, WaitBitsPrivate, cast[uint32](compare),
                         timeout = addr tm, val3 = mask)
 
-proc wake*[T](monitor: var Atomic[T]; count = high(uint32)): cint {.discardable.} =
+proc wake*[T](monitor: var Atomic[T]; count = high(int32)): cint {.discardable.} =
   ## Wake as many as `count` threads from the same process.
   # Returns the number of actually woken threads
   # or a Posix error code (if negative).
-  result = sysFutex(addr monitor, WakePrivate, count)
+  result = sysFutex(addr monitor, WakePrivate, cast[uint32](count))
 
-proc wakeMask*[T](monitor: var Atomic[T]; mask: uint32; count = high(uint32)): cint {.discardable.} =
+proc wakeMask*[T](monitor: var Atomic[T]; mask: uint32; count = high(int32)): cint {.discardable.} =
   ## Wake as many as `count` threads from the same process,
   ## which are all waiting on any set bit in `mask`.
   # Returns the number of actually woken threads
@@ -105,7 +105,7 @@ proc wakeMask*[T](monitor: var Atomic[T]; mask: uint32; count = high(uint32)): c
     if mask == 0:
       raise FutexError.newException "missing 32-bit mask"
     else:
-      result = sysFutex(addr monitor, WakeBitsPrivate, count, val3 = mask)
+      result = sysFutex(addr monitor, WakeBitsPrivate, cast[uint32](count), val3 = mask)
 
 proc checkWait*(err: cint): cint {.discardable.} =
   if -1 == err:

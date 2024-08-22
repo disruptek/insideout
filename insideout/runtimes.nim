@@ -174,7 +174,7 @@ proc thaw*(runtime: Runtime) =
     checkWake wakeMask(runtime[].flags, <<!Frozen)
     interrupt runtime[]
 
-proc poke*(runtime: Runtime; count = high(uint32)) {.deprecated.} =
+proc poke*(runtime: Runtime; count = high(int32)) {.deprecated.} =
   checkWake wake(runtime[].flags, count = count)
 
 proc waitForFlags(runtime: var RuntimeObj; mode: WaitMode; wants: uint32): bool {.raises: [RuntimeError].} =
