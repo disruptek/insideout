@@ -17,13 +17,15 @@ proc `=copy`*[T](dest: var Reference[T]; src: Reference[T]) {.error.}
 proc isNil*[T](arc: AtomicRef[T]): bool =
   arc.reference.isNil
 
-from pkg/balls import checkpoint
+when false and not defined(danger):
+  from pkg/balls import checkpoint
 
-proc debug[T](arc: AtomicRef[T]; s: string; m: string) =
-  when false and not defined(danger):
+  proc debug[T](arc: AtomicRef[T]; s: string; m: string) =
     when not defined(release):
       if not arc.reference.isNil:
         checkpoint s & ":", T, cast[int](arc.reference).toHex.toLowerAscii, m
+else:
+  template debug[T](arc: AtomicRef[T]; s: string; m: string) = discard
 
 proc `=destroy`[T](arc: var AtomicRef[T]) {.raises: [].} =
   mixin `=destroy`
