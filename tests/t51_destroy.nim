@@ -47,6 +47,7 @@ proc main() =
   block:
     var mailbox = newMailbox[Continuation]()
     var pool = newPool(ContinuationRunner, mailbox, N)
+    closeWrite mailbox
     for runtime in pool.mitems:
       info runtime
       halt runtime
