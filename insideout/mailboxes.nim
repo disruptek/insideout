@@ -251,39 +251,35 @@ proc isFull*[T](mail: Mailbox[T]): bool =
 
 proc waitForPushable*[T](mail: Mailbox[T]): bool =
   ## true if the mailbox is pushable, false if it never will be
-  let state = get mail[].state
-  if state && <<Paused:
-    result = true
-    discard mail.performWait(state, <<!{Writable, Readable, Paused})
-  elif state && <<!Writable:
-    result = false
-  elif state && <<!Readable:            # it cannot be drained, but
-    result = mail.len < mail.capacity   # can it be filled?
-  elif state && <<Full:
+  while true:
+    let state = get mail[].state
+    if state && <<Paused:
+      discard mail.performWait(state, <<!{Writable, Readable, Paused})
+    elif state && <<!Writable:
+      return false
     # NOTE: short-circuit when the mailbox is full and unreadable
-    result = state && <<Readable
-    if result:
+    elif state && <<!Readable:            # it cannot be drained, but
+      return mail.len < mail.capacity     # can it be filled?
+    elif state && <<Full:
       discard mail.performWait(state, <<!{Writable, Readable, Full})
-  else:
-    result = true
+    else:
+      return true
 
 proc waitForPoppable*[T](mail: Mailbox[T]): bool =
   ## true if the mailbox is poppable, false if it never will be
-  let state = get mail[].state
-  if state && <<Paused:
-    result = true
-    discard mail.performWait(state, <<!{Readable, Writable, Paused})
-  elif state && <<!Readable:
-    result = false
-  elif state && <<!Writable:            # it cannot be filled, but
-    result = mail.len > 0               # can it be drained?
-  elif state && <<Empty:
+  while true:
+    let state = get mail[].state
+    if state && <<Paused:
+      discard mail.performWait(state, <<!{Readable, Writable, Paused})
+    elif state && <<!Readable:
+      return false
     # NOTE: short-circuit when the mailbox is empty and unwritable
-    result = state && <<Writable
-    if result:
-      discard mail.performWait(state, <<!{Writable, Readable, Empty})
-  else:
-    result = true
+    elif state && <<!Writable:            # it cannot be filled, but
+      return mail.len > 0                 # can it be drained?
+    elif state && <<Empty:
+      discard mail.performWait(state, <<!{Readable, Writable, Empty})
+    else:
+      return true
 
 proc markEmpty[T](mail: var MailboxObj[T]): MailFlag =
   ## mark the mailbox as empty; if it's also unwritable,
@@ -380,10 +376,10 @@ proc trySend*[T](mail: Mailbox[T]; item: var T): MailFlag =
     Paused
   elif state && <<!Writable:
     Unwritable
-  elif state && <<Full and mail.len >= mail.capacity:
-    Full
   elif state && <<!Readable and mail.len >= mail.capacity:
     Unwritable                # full and unreadable; go away
+  elif state && <<Full and mail.len >= mail.capacity:
+    Full
   else:
     mail.performPush(item)
 
@@ -397,9 +393,9 @@ proc push[T](mail: Mailbox[T]; item: var T): MailFlag =
     of Delivered, Unwritable, Interrupt:
       break
     of Full:
-      discard mail.performWait(state, <<!{Writable, Full})
+      discard mail.performWait(state, <<!{Writable, Readable, Full})
     of Paused:
-      discard mail.performWait(state, <<!{Writable, Paused})
+      discard mail.performWait(state, <<!{Writable, Readable, Paused})
     else:
       discard
 
@@ -472,10 +468,10 @@ proc tryRecv*[T](mail: Mailbox[T]; item: var T): MailFlag =
     Paused
   elif state && <<!Readable:
     Unreadable
-  elif state && <<Empty and mail.len == 0:
-    Empty
   elif state && <<!Writable and mail.len == 0:
     Unreadable                # empty and unwritable; go away
+  elif state && <<Empty and mail.len == 0:
+    Empty
   else:
     mail.performPop(item)
 
@@ -489,9 +485,9 @@ proc pop[T](mail: Mailbox[T]; item: var T): MailFlag =
     of Unreadable, Received, Interrupt:
       break
     of Paused:
-      discard mail.performWait(state, <<!{Readable, Paused})
+      discard mail.performWait(state, <<!{Readable, Writable, Paused})
     of Empty:
-      discard mail.performWait(state, <<!{Readable, Empty})
+      discard mail.performWait(state, <<!{Readable, Writable, Empty})
     else:
       discard
 

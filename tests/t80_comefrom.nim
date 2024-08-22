@@ -63,6 +63,7 @@ proc application(): int {.cps: Continuation.} =
 
   # we're still at home
   doAssert home == getThreadId()
+  closeWrite mail
   halt pool
 
 proc main =
