@@ -15,7 +15,6 @@ let N =
     1_000_000
   else:
     100_000_000
-let M = countProcessors()
 
 proc work() {.cps: Continuation.} =
   discard
@@ -28,17 +27,17 @@ proc filler(queue: Mailbox[Continuation]; m: int) {.cps: Continuation.} =
       discard
     dec m
 
-proc attempt(N: Positive; cores: int = countProcessors()) =
+proc attempt(N: Positive; cores: int) =
   var queue = newMailbox[Continuation]()
   block:
     info "filling queue with ", N, " work items"
     var fills = newMailbox[Continuation]()
-    var m = M
+    var m = cores
     while m > 0:
       fills.send:
-        whelp queue.filler(N div M)
+        whelp queue.filler(N div cores)
       dec m
-    var fillers = newPool(ContinuationRunner, fills, initialSize = M)
+    var fillers = newPool(ContinuationRunner, fills, initialSize = cores)
     # don't join runtimes until they've all begun their filler
     fills.waitForEmpty()
   pause queue
@@ -60,7 +59,7 @@ proc attempt(N: Positive; cores: int = countProcessors()) =
   info fmt"{cores:>2d}core = {clock:>10.4f}s, {rate:>10.0f}/sec, {perCore:>10.0f}/core; "
 
 proc main =
-  var cores = @[countProcessors()]
+  var cores = @[countProcessors(), countProcessors() div 2]
   var N = N
   if paramCount() > 1:
     cores = @[parseInt paramStr(2)]

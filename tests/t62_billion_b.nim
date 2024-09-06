@@ -28,7 +28,7 @@ proc filler(queue: Mailbox[Continuation]; m: int) {.cps: Continuation.} =
       queue.send: whelp work()
       dec m
 
-proc attempt(N: Positive; cores: int = countProcessors()) =
+proc attempt(N: Positive; cores: int) =
   var queues: seq[Mailbox[Continuation]]
   block:
     info "filling queues with ", N, " work items"
@@ -63,7 +63,7 @@ proc attempt(N: Positive; cores: int = countProcessors()) =
     halt pool
 
 proc main =
-  var cores = @[countProcessors()]
+  var cores = @[countProcessors(), countProcessors() div 2]
   var N = N
   if paramCount() > 1:
     cores = @[parseInt paramStr(2)]
