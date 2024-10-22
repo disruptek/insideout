@@ -20,7 +20,12 @@ let N =
   else:
     1
 
-const secs = 0.10
+let secs =
+  if getEnv"GITHUB_ACTIONS" == "true":
+    1.0
+  else:
+    0.1
+
 const delay = 0
 
 type
