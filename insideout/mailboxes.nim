@@ -511,11 +511,27 @@ proc resume*[T](mail: Mailbox[T]) =
   if disable(mail[].state, Paused):
     checkWake wakeMask(mail[].state, <<!Paused)
 
+proc clear*[T](mail: var MailboxObj[T]) =
+  when insideoutSafeMode:
+    withRLock mail.lock:
+      while not mail.list.head.isNil:
+        if mail.list.head.next == mail.list.head:  # last item
+          reset mail.list.head.next
+          reset mail.list.head
+        else:
+          var node = mail.list.head
+          mail.list.head = node.next
+          if mail.list.tail.next == node:
+            mail.list.tail.next = mail.list.head
+          reset node
+  else:
+    if not mail.queue.isNil:
+      while not pop(mail.queue).isNil:
+        discard
+
 proc clear*[T](mail: Mailbox[T]) =
   when T isnot void:
-    if not mail[].queue.isNil:
-      while not pop(mail[].queue).isNil:
-        discard
+    clear mail[]
 
 proc waitForEmpty*[T](mail: Mailbox[T]) =
   assert not mail.isNil
