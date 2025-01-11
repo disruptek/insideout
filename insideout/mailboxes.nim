@@ -406,8 +406,8 @@ when insideoutSafeMode:
       if mail.list.head.isNil:
         result = Empty  # for parity with loony
       elif mail.list.head.next == mail.list.head:  # last item
-        reset mail.list.head.next
-        item = move mail.list.head.value
+        var node = move mail.list.head
+        item = move node.value
         reset mail.list
         result = Received
       else:
