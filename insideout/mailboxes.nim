@@ -407,12 +407,13 @@ when insideoutSafeMode:
         result = Empty  # for parity with loony
       elif mail.list.head.next == mail.list.head:  # last item
         var node = move mail.list.head
+        reset node.next
         item = move node.value
         reset mail.list
         result = Received
       else:
         var node = move mail.list.head
-        mail.list.head = node.next
+        mail.list.head = move node.next
         if mail.list.tail.next == node:
           mail.list.tail.next = mail.list.head
         item = move node.value
