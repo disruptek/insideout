@@ -1,4 +1,4 @@
-version = "1.0.7"
+version = "1.0.8"
 author = "disruptek"
 description = "insideout"
 license = "MIT"
