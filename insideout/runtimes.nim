@@ -543,39 +543,44 @@ proc dispatcher(runtime: sink Runtime): cint =
   ## blocking dispatcher for a runtime
   pthread_cleanup_push(teardown, runtime.address)
 
-  # enable cancellation or die trying
-  var e: ref Exception
-  if 0 != pthread_setcancelstate(PTHREAD_CANCEL_DISABLE.cint, nil):
-    e = RuntimeError.newException "unable to set cancel state on a new thread"
-  # NOTE: deferred probably won't make sense until we're on eventfd
-  when insideoutDeferredCancellation:
-    if 0 != pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED.cint, nil):
-      e = RuntimeError.newException "unable to set cancel type on a new thread"
-  else:
-    if 0 != pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS.cint, nil):
-      e = RuntimeError.newException "unable to set cancel type on a new thread"
-  if 0 != pthread_setcancelstate(PTHREAD_CANCEL_ENABLE.cint, nil):
-    e = RuntimeError.newException "unable to enable cancellation"
+  # HACK: pthread_cleanup_push/pop contains `{}` pairs, effectively acting as a
+  # scope in C.
+  # A `block` is used here to communicate that to NimSkull and prevent
+  # destructors from being injected after the C scope.
+  block:
+    # enable cancellation or die trying
+    var e: ref Exception
+    if 0 != pthread_setcancelstate(PTHREAD_CANCEL_DISABLE.cint, nil):
+      e = RuntimeError.newException "unable to set cancel state on a new thread"
+    # NOTE: deferred probably won't make sense until we're on eventfd
+    when insideoutDeferredCancellation:
+      if 0 != pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED.cint, nil):
+        e = RuntimeError.newException "unable to set cancel type on a new thread"
+    else:
+      if 0 != pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS.cint, nil):
+        e = RuntimeError.newException "unable to set cancel type on a new thread"
+    if 0 != pthread_setcancelstate(PTHREAD_CANCEL_ENABLE.cint, nil):
+      e = RuntimeError.newException "unable to enable cancellation"
 
-  if not e.isNil:
-    result = exceptionHandler(e, "cancellation;")
-  else:
-    let flags = get runtime[].flags
-    var mask = signalMask runtime[]
-    runtime[].signals = initSignalFd(mask)
-    var handler = whelp defaultSignalHandler(runtime, runtime[].signals)
-    var eq: EventQueue
-    defer: deinit eq
-    if flags && <<Polling:
-      init eq
-      if runtime[].signals != invalidFd:
-        discard eq.register(handler, runtime[].signals, {Edge, Read})
+    if not e.isNil:
+      result = exceptionHandler(e, "cancellation;")
+    else:
+      let flags = get runtime[].flags
+      var mask = signalMask runtime[]
+      runtime[].signals = initSignalFd(mask)
+      var handler = whelp defaultSignalHandler(runtime, runtime[].signals)
+      var eq: EventQueue
+      defer: deinit eq
+      if flags && <<Polling:
+        init eq
+        if runtime[].signals != invalidFd:
+          discard eq.register(handler, runtime[].signals, {Edge, Read})
 
-    if result == 0:
-      try:
-        result = loop(eq, runtime[])
-      except CatchableError as e:
-        result = exceptionHandler(e, "loop;")
+      if result == 0:
+        try:
+          result = loop(eq, runtime[])
+        except CatchableError as e:
+          result = exceptionHandler(e, "loop;")
 
   pthread_exit(addr result)
   pthread_cleanup_pop(0)
