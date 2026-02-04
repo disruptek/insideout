@@ -31,7 +31,7 @@ else:
 
 import pkg/cps
 from pkg/cps/spec import pragmaArgument
-from pkg/cps/normalizedast import NormNode
+from pkg/cps/ast import NormNode
 
 proc coop*(a: sink Continuation): Continuation {.cpsMagic.} =
   ## yield to the dispatcher
