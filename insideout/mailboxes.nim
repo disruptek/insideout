@@ -330,11 +330,10 @@ when insideoutSafeMode:
       mail.list.tail = move node
       result = Delivered
 else:
-  proc unboundedPush[T](mail: var MailboxObj[T]; item: var T): MailFlag =
-    ## push an item without regard to bounds
-    mail.queue.unsafePush(move item)
-    #mail.queue.push(move item)
-    result = Delivered
+   proc unboundedPush[T](mail: var MailboxObj[T]; item: var T): MailFlag =
+     ## push an item without regard to bounds
+     mail.queue.push(move item)
+     result = Delivered
 
 proc performPush[T](mail: Mailbox[T]; item: var T): MailFlag =
   ## safely push an item onto the mailbox; returns Delivered
@@ -419,14 +418,13 @@ when insideoutSafeMode:
         item = move node.value
         result = Received
 else:
-  proc unboundedPop[T](mail: var MailboxObj[T]; item: var T): MailFlag =
-    ## pop an item without regard to bounds
-    item = mail.queue.unsafePop()
-    #item = mail.queue.pop()
-    if item.isNil:
-      result = Empty
-    else:
-      result = Received
+   proc unboundedPop[T](mail: var MailboxObj[T]; item: var T): MailFlag =
+     ## pop an item without regard to bounds
+     item = mail.queue.pop()
+     if item.isNil:
+       result = Empty
+     else:
+       result = Received
 
 proc performPop[T](mail: Mailbox[T]; item: var T): MailFlag =
   ## safely pop an item from the mailbox; returns Received

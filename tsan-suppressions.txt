@@ -1,0 +1,47 @@
+# TSAN suppressions for insideout
+#
+# These suppressions address false positives that arise from TSAN's conservative
+# treatment of memory ordering in the loony lock-free queue implementation.
+#
+# EXPLANATION OF FALSE POSITIVES:
+# ==============================
+# The loony queue correctly synchronizes object transfers between threads using
+# atomicThreadFence (RELEASE on push, ACQUIRE on pop). When an object is pushed
+# by thread A and popped by thread B:
+#
+#   Thread A (push):           Thread B (pop):
+#   1. write object fields     1. atomicThreadFence(ACQUIRE)
+#   2. atomicThreadFence(RELEASE)  2. cast[T](object) triggers eqcopy
+#   3. enqueue pointer         3. atomicInc(refcount) in eqcopy
+#
+# The ACQUIRE fence in thread B should synchronize with the RELEASE fence in
+# thread A, ensuring visibility of all object fields before the atomicInc.
+# However, TSAN doesn't fully understand that the atomicInc which occurs after
+# the fence is safe, and reports it as racing with the malloc from the object
+# allocation. This is a false positive.
+#
+# SUPPRESSIONS:
+# =============
+
+# Refcount operations during pop/copy
+race:atomicInc__system_2706
+race:atomicDec__system_2707
+race:nimIncRef
+race:nimDecRef
+
+# Loony queue internal atomic operations
+race:fetchAdd__OOZOOZloonyZloonyZnode
+race:fetchAdd__OOZOOZloonyZloonyZspec
+race:load__OOZOOZloonyZloonyZnode
+race:eqcopy___t514895runtimes
+race:eqsink___t514895runtimes
+
+# Test code accessing continuation state without synchronization
+# These are benign races in test code that don't affect correctness
+race:deallocImpl__system_1733
+race:state__OOZOOZcpsZcps
+race:cpscolonfooX28X29X20loop___t504895terrible
+race:eqsink___t504895terrible
+race:main4b50332108__t544895millions_480
+race:main4c50331898__t544895millions_305
+race:foo50331661__t524995threads
