@@ -64,6 +64,21 @@ and may not work with mainline Nim.
 insideout is tested with compiler sanitizers to make sure it doesn't
 demonstrate memory leaks or data-races.
 
+### ThreadSanitizer (TSAN)
+
+When running tests with TSAN (`balls --define:danger`), you may see benign false
+positive warnings about data races in the loony queue's atomic refcount operations.
+These false positives occur because TSAN is overly conservative about memory
+ordering in lock-free queue patterns that use atomicThreadFence for synchronization.
+
+To suppress these false positives, set the TSAN_OPTIONS environment variable:
+
+```bash
+TSAN_OPTIONS="suppressions=$(pwd)/tsan-suppressions.txt" balls --define:danger
+```
+
+See `tsan-suppressions.txt` for details on why these warnings are safe to ignore.
+
 ## Documentation
 
 Nim's documentation generator breaks when attempting to read insideout.
