@@ -4,7 +4,7 @@ import std/posix
 import std/strformat
 
 import pkg/cps
-import pkg/trees/avl
+import pkg/trees/wavl
 
 import insideout/times
 import insideout/importer
@@ -41,8 +41,8 @@ type
 
   EventQueue* = AtomicRef[EventQueueObj]
 
-  Registry = AVLTree[Id, Record]
-  Watchers = AVLTree[Fd, Registry]
+  Registry = WAVLTree[Id, Record]
+  Watchers = WAVLTree[Fd, Registry]
 
   Event* = enum
     Read
@@ -210,7 +210,7 @@ proc close*(fd: var Fd) =
       discard
     fd = invalidFd
 
-proc destroy[K, V](tree: var AVLTree[K, V]) {.raises: [].} =
+proc destroy[K, V](tree: var WAVLTree[K, V]) {.raises: [].} =
   while tree.len > 0:
     try:
       tree.popMax

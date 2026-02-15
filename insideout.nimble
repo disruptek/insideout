@@ -5,4 +5,4 @@ license = "MIT"
 
 requires "https://github.com/nim-works/cps >= 0.11.0 & < 1.0.0"
 requires "https://github.com/nim-works/loony >= 0.2.0 & < 1.0.0"
-requires "https://github.com/disruptek/trees >= 0.2.0 & < 1.0.0"
+requires "https://github.com/disruptek/trees >= 1.0.0 & < 2.0.0"
