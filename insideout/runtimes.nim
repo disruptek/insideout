@@ -23,7 +23,13 @@ export coop
 const insideoutAggressiveDealloc {.booldefine.} = false
 const insideoutDeferredCancellation* {.booldefine.} = false
 
-let insideoutInterruptSignal* = SIGRTMIN
+when defined(macosx) or defined(darwin) or defined(bsd):
+  # macOS and the BSDs do not provide realtime signals (SIGRTMIN); SIGUSR1
+  # is the closest application-reserved signal usable for thread interruption.
+  let insideoutInterruptSignal* = SIGUSR1
+else:
+  let insideoutInterruptSignal* = SIGRTMIN
+
 let unmaskedSignals = {insideoutInterruptSignal}
 
 type
@@ -192,13 +198,23 @@ proc waitForFlags(runtime: var RuntimeObj; mode: WaitMode; wants: uint32): bool 
         checkWait waitMask(runtime.flags, has, wants and not has)
       except FutexError as e:
         raise RuntimeError.newException $e.name & ":" & e.msg
-    case err
-    of 0, EINTR, EAGAIN:
-      discard
-    of ETIMEDOUT:
-      raise RuntimeError.newException "timeout waiting for thread"
+    when defined(macosx) or defined(darwin):
+      # macOS exposes EINTR/EAGAIN/ETIMEDOUT as `let`-bound importc values,
+      # which cannot appear in `case` branches; an `if` ladder is used here.
+      if err == 0 or err == EINTR or err == EAGAIN:
+        discard
+      elif err == ETIMEDOUT:
+        raise RuntimeError.newException "timeout waiting for thread"
+      else:
+        raise RuntimeError.newException "unexpected futex error: " & $err
     else:
-      raise RuntimeError.newException "unexpected futex error: " & $err
+      case err
+      of 0, EINTR, EAGAIN:
+        discard
+      of ETIMEDOUT:
+        raise RuntimeError.newException "timeout waiting for thread"
+      else:
+        raise RuntimeError.newException "unexpected futex error: " & $err
 
 proc halt*(runtime: Runtime): bool {.discardable.} =
   ## ask the runtime to exit; true if the runtime wasn't already halted
@@ -330,7 +346,7 @@ const emptyTimeSpec = TimeSpec(tv_sec: 0.Time, tv_nsec: 0.clong)
 
 proc process(eq: var EventQueue; runtime: var RuntimeObj): cint =
   ## process one event or signal in each iteration of the event loop
-  var events {.noinit.}: array[1, epoll_event]
+  var events {.noinit.}: array[1, EventInfo]
   try:
     let ready = eq.wait(events, timeout = addr emptyTimeSpec, nil)
     if ready == -1:
@@ -449,26 +465,51 @@ proc loop(eq: var EventQueue; runtime: var RuntimeObj): cint =
       if flags && <<!Frozen:
         phase = CheckState
       else:
-        case checkWait waitMask(runtime.flags, flags, <<Halted + <<!Frozen)
-        of EINTR:
-          discard
-        of 0, EAGAIN:
-          let flags = get runtime.flags
-          phase =
-            if flags && <<Halted:      # halted while frozen
-              HaltPhase
-            elif flags && <<Frozen:    # spurious wakeup
-              FrozenPhase              # loop and don't rename thread
-            else:                      # unfrozen
-              CheckState
-        of ETIMEDOUT:
-          runtime.error = RuntimeError.newException "timeout"
-          result = exceptionHandler(runtime.error, "frozen;")
-          nextIf errno
+        when defined(macosx) or defined(darwin):
+          # macOS exposes EINTR/EAGAIN/ETIMEDOUT as `let`-bound importc
+          # values, which cannot appear in `case` branches; an `if` ladder
+          # is used here.
+          let e = checkWait waitMask(runtime.flags, flags, <<Halted + <<!Frozen)
+          if e == EINTR:
+            discard
+          elif e == 0 or e == EAGAIN:
+            let flags = get runtime.flags
+            phase =
+              if flags && <<Halted:      # halted while frozen
+                HaltPhase
+              elif flags && <<Frozen:    # spurious wakeup
+                FrozenPhase              # loop and don't rename thread
+              else:                      # unfrozen
+                CheckState
+          elif e == ETIMEDOUT:
+            runtime.error = RuntimeError.newException "timeout"
+            result = exceptionHandler(runtime.error, "frozen;")
+            nextIf errno
+          else:
+            runtime.error = RuntimeError.newException $strerror(errno)
+            result = exceptionHandler(runtime.error, "frozen;")
+            nextIf errno
         else:
-          runtime.error = RuntimeError.newException $strerror(errno)
-          result = exceptionHandler(runtime.error, "frozen;")
-          nextIf errno
+          case checkWait waitMask(runtime.flags, flags, <<Halted + <<!Frozen)
+          of EINTR:
+            discard
+          of 0, EAGAIN:
+            let flags = get runtime.flags
+            phase =
+              if flags && <<Halted:      # halted while frozen
+                HaltPhase
+              elif flags && <<Frozen:    # spurious wakeup
+                FrozenPhase              # loop and don't rename thread
+              else:                      # unfrozen
+                CheckState
+          of ETIMEDOUT:
+            runtime.error = RuntimeError.newException "timeout"
+            result = exceptionHandler(runtime.error, "frozen;")
+            nextIf errno
+          else:
+            runtime.error = RuntimeError.newException $strerror(errno)
+            result = exceptionHandler(runtime.error, "frozen;")
+            nextIf errno
 
     of HaltPhase:
       if result == 0:
@@ -506,12 +547,6 @@ proc setupInterrupts*() {.raises: [RuntimeError].} =
   sa.sa_handler = ignore
   checkSig sigaction(insideoutInterruptSignal, sa, nil)
 
-proc initSignalFd*(mask: Sigset): Fd {.raises: [RuntimeError].} =
-  ## create a new signal file descriptor
-  result = signalfd(invalidFd, addr mask, SFD_NONBLOCK or SFD_CLOEXEC)
-  if invalidFd == result:
-    raise RuntimeError.newException: $strerror(errno)
-
 proc signalMask(runtime: var RuntimeObj): Sigset {.raises: [RuntimeError].} =
   ## compose a signal mask for the runtime
   checkSig sigfillset(result)
@@ -526,17 +561,32 @@ proc defaultSignalHandler(runtime: Runtime; fd: Fd) {.cps: Continuation.} =
   while true:
     coop()
     var info = fd.readSigInfo()
-    case info.ssi_signo.cint
-    of SIGINT:
-      # if we're here, well, mission accomplished
-      discard
-    of SIGTERM, SIGQUIT:
-      halt runtime
-    of SIGCONT:
-      thaw runtime
+    when defined(macosx) or defined(darwin):
+      # macOS exposes the signal constants as `let`-bound importc values,
+      # which cannot appear in `case` branches; an `if` ladder is used here.
+      let s = info.ssi_signo.cint
+      if s == SIGINT:
+        # if we're here, well, mission accomplished
+        discard
+      elif s == SIGTERM or s == SIGQUIT:
+        halt runtime
+      elif s == SIGCONT:
+        thaw runtime
+      else:
+        when false:
+          debugEcho getThreadId(), ": ignore ", repr(info)
     else:
-      when false:
-        debugEcho getThreadId(), ": ignore ", repr(info)
+      case info.ssi_signo.cint
+      of SIGINT:
+        # if we're here, well, mission accomplished
+        discard
+      of SIGTERM, SIGQUIT:
+        halt runtime
+      of SIGCONT:
+        thaw runtime
+      else:
+        when false:
+          debugEcho getThreadId(), ": ignore ", repr(info)
     dismiss()
 
 proc dispatcher(runtime: sink Runtime): cint =
@@ -567,6 +617,15 @@ proc dispatcher(runtime: sink Runtime): cint =
     else:
       let flags = get runtime[].flags
       var mask = signalMask runtime[]
+      
+      when defined(macosx) or defined(darwin) or defined(bsd):
+        # macOS/BSD cannot attach the signal mask to the pthread attributes
+        # at spawn time (no pthread_attr_setsigmask_np), so it is applied to
+        # this dispatcher thread explicitly here.
+        var oldMask: Sigset
+        if 0 != pthread_sigmask(SIG_SETMASK, mask, oldMask):
+          result = exceptionHandler(RuntimeError.newException "unable to set signal mask", "mask;")
+
       runtime[].signals = initSignalFd(mask)
       var handler = whelp defaultSignalHandler(runtime, runtime[].signals)
       var eq: EventQueue
@@ -600,7 +659,12 @@ proc boot(runtime: var RuntimeObj; size = insideoutStackSize)
   let mask = signalMask runtime
   var attr {.noinit.}: PThreadAttr
   spawnCheck pthread_attr_init(addr attr)
-  spawnCheck pthread_attr_setsigmask_np(addr attr, addr mask)
+  when defined(macosx) or defined(darwin) or defined(bsd):
+    # macOS and the BSDs do not provide pthread_attr_setsigmask_np; the
+    # dispatcher applies the thread signal mask explicitly via pthread_sigmask.
+    discard
+  else:
+    spawnCheck pthread_attr_setsigmask_np(addr attr, addr mask)
   spawnCheck pthread_attr_setdetachstate(addr attr, PTHREAD_CREATE_DETACHED)
   spawnCheck pthread_attr_setstacksize(addr attr, size.cint)
   runtime.parent = pthread_self()
@@ -619,13 +683,23 @@ proc boot(runtime: var RuntimeObj; size = insideoutStackSize)
       except FutexError as e:
         raise SpawnError.newException e.msg
         errno
-    case err
-    of 0, EINTR, EAGAIN:
-      discard
-    of ETIMEDOUT:
-      raise SpawnError.newException "timeout waiting for thread to boot"
+    when defined(macosx) or defined(darwin):
+      # macOS exposes EINTR/EAGAIN/ETIMEDOUT as `let`-bound importc values,
+      # which cannot appear in `case` branches; an `if` ladder is used here.
+      if err == 0 or err == EINTR or err == EAGAIN:
+        discard
+      elif err == ETIMEDOUT:
+        raise SpawnError.newException "timeout waiting for thread to boot"
+      else:
+        raise SpawnError.newException "unexpected futex errno: " & $err
     else:
-      raise SpawnError.newException "unexpected futex errno: " & $err
+      case err
+      of 0, EINTR, EAGAIN:
+        discard
+      of ETIMEDOUT:
+        raise SpawnError.newException "timeout waiting for thread to boot"
+      else:
+        raise SpawnError.newException "unexpected futex errno: " & $err
     flags = get runtime.flags
     if flags && <<{Boot, Teardown}:
       raise SpawnError.newException "thread crashed during boot"

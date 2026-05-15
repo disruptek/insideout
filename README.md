@@ -79,6 +79,49 @@ TSAN_OPTIONS="suppressions=$(pwd)/tsan-suppressions.txt" balls --define:danger
 
 See `tsan-suppressions.txt` for details on why these warnings are safe to ignore.
 
+## macOS
+
+insideout targets Linux first; macOS (and the BSDs) are supported on a
+best-effort basis. The Linux build is unaffected: every macOS-specific code
+path sits behind a `when defined(macosx) or defined(darwin) or defined(bsd)`
+guard, and the `else` branch reproduces the original Linux behaviour.
+
+### What is emulated
+
+macOS exposes no public equivalent of several Linux primitives, so they are
+emulated:
+
+- **futex** — emulated with the *undocumented* `__ulock_wait` / `__ulock_wake`
+  syscalls. These are the closest match to Linux futexes (address-based
+  waiting with no extra state) and are used by Go, Rust's `std`, and WebKit
+  for the same reason. Because they are undocumented, Apple may change them
+  between OS releases, and binaries that use them cannot be shipped through
+  the Mac App Store.
+- **epoll** — replaced with `kqueue(2)`: timers use `EVFILT_TIMER`, I/O uses
+  `EVFILT_READ` / `EVFILT_WRITE`.
+- **signalfd** — macOS cannot poll signals through a file descriptor, so a
+  dedicated signal thread waits on `EVFILT_SIGNAL` and forwards each caught
+  signal number through a pipe; the read end of that pipe stands in for the
+  signalfd.
+- **timerfd** — `sleep` arms a fd-less one-shot `EVFILT_TIMER` instead.
+- **SIGRTMIN** — macOS has no realtime signals, so `SIGUSR1` is used as the
+  thread-interruption signal.
+
+### Building on macOS
+
+The same flags as Linux apply (see *Support* above): `--define:useMalloc`,
+`--mm:arc`, `--backend:c`. No macOS-specific flags are required.
+
+If the stability of the undocumented `__ulock` syscalls ever becomes a
+problem, a slower `pthread_cond`-based fallback could be added; it is not
+implemented today.
+
+### Tests
+
+macOS-specific behaviour is covered by `tests/t*_*_macos.nim`. Those files are
+themselves `when`-guarded to Darwin/BSD and are inert on other platforms; each
+file documents, at its top, what it asserts and why.
+
 ## Documentation
 
 Nim's documentation generator breaks when attempting to read insideout.

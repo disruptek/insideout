@@ -230,11 +230,19 @@ proc performWait[T](mail: Mailbox[T]; has: uint32; wants: uint32): bool {.discar
   result = 0 == (has and wants)
   if result:
     let e = checkWait waitMask(mail[].state, has, wants)
-    case e
-    of EINTR:
-      debug "INTERRUPT"
+    when defined(macosx) or defined(darwin):
+      # macOS exposes EINTR as a `let`-bound importc value, which cannot
+      # appear in a `case` branch; an `if` is used here instead.
+      if e == EINTR:
+        debug "INTERRUPT"
+      else:
+        discard
     else:
-      discard
+      case e
+      of EINTR:
+        debug "INTERRUPT"
+      else:
+        discard
     # consume any Interrupt and wake a single interruptee
     if mail[].state.disable Interrupt:
       checkWake wakeMask(mail[].state, <<!Interrupt, count = 1)

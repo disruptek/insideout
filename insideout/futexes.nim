@@ -39,14 +39,56 @@ const
   WaitBitsPrivate = WaitBitset.ord or PrivateFlag.ord
   WakeBitsPrivate = WakeBitset.ord or PrivateFlag.ord
 
-let NR_Futex {.importc: "__NR_futex", header: "<sys/syscall.h>".}: cint
-proc syscall(sysno: clong): cint {.header:"<unistd.h>", varargs.}
+when defined(linux):
+  let NR_Futex {.importc: "__NR_futex", header: "<sys/syscall.h>".}: cint
+  proc syscall(sysno: clong): cint {.header:"<unistd.h>", varargs.}
 
-proc sysFutex(uaddr: pointer; futex_op: cint; val: uint32;
-              timeout: ptr TimeSpec = nil; uaddr2: ptr uint32 = nil;
-              val3: uint32 = 0): cint =
-  assert val != 0
-  result = syscall(NR_Futex, uaddr, futex_op, val, timeout, uaddr2, val3)
+  proc sysFutex(uaddr: pointer; futex_op: cint; val: uint32;
+                timeout: ptr TimeSpec = nil; uaddr2: ptr uint32 = nil;
+                val3: uint32 = 0): cint =
+    assert val != 0
+    result = syscall(NR_Futex, uaddr, futex_op, val, timeout, uaddr2, val3)
+
+elif defined(macosx) or defined(darwin):
+  # Use ulock_wait and ulock_wake on Darwin
+  # https://github.com/apple/darwin-xnu/blob/master/bsd/sys/ulock.h
+  const
+    UL_COMPARE_AND_WAIT = 1
+    UL_COMPARE_AND_WAIT_SHARED = 3
+    ULOCK_NO_TIMEOUT = 0
+    
+  proc ulock_wait(operation: uint32; uaddr: pointer; value: uint64;
+                  timeout: uint32): cint {.importc: "__ulock_wait", noconv.}
+  proc ulock_wake(operation: uint32; uaddr: pointer; wake_value: uint64): cint
+                  {.importc: "__ulock_wake", noconv.}
+
+  proc sysFutex(uaddr: pointer; futex_op: cint; val: uint32;
+                timeout: ptr TimeSpec = nil; uaddr2: ptr uint32 = nil;
+                val3: uint32 = 0): cint =
+    # Map Linux futex operations to Darwin ulock operations
+    # This is a simplification.
+    let op = futex_op and not PrivateFlag.ord
+    if op == Wait.ord or op == WaitBitset.ord:
+      let to = if timeout.isNil: 0.uint32 else: (int(timeout.tv_sec) * 1_000_000 + int(timeout.tv_nsec div 1000)).uint32
+      # Linux futex(WAIT) returns EAGAIN if *uaddr != val.
+      # macOS ulock_wait seems to return 0 in some cases of mismatch.
+      # We check the value here to provide consistent behavior.
+      if cast[ptr uint32](uaddr)[] != val:
+        errno = EAGAIN
+        return -1
+      
+      result = ulock_wait(UL_COMPARE_AND_WAIT, uaddr, val.uint64, to)
+      
+      # If ulock_wait returns 0, we might still have a mismatch if it returned immediately.
+      if result == 0 and cast[ptr uint32](uaddr)[] != val:
+        errno = EAGAIN
+        return -1
+        
+    elif op == Wake.ord or op == WakeBitset.ord:
+      result = ulock_wake(UL_COMPARE_AND_WAIT, uaddr, 0)
+    else:
+      result = -1
+      errno = ENOSYS
 
 proc wait*[T](monitor: var Atomic[T]; compare: T): cint =
   ## Suspend a thread if the value of `monitor` is the same as `compare`.
@@ -81,10 +123,17 @@ proc waitMask*[T](monitor: var Atomic[T]; compare: T; mask: uint32;
       raise FutexError.newException "mask and compare overlap"
     else:
       var tm: TimeSpec
-      try:
-        vm = getTimeSpec(CLOCK_MONOTONIC) + timeout.toTimeSpec
-      except OSError as e:
-        raise FutexError.newException $e.name & ":" & e.msg
+      when defined(macosx) or defined(darwin):
+        # Darwin's ulock emulation interprets the timeout as a relative
+        # duration, so the interval is passed through directly.
+        tm = timeout.toTimeSpec
+      else:
+        # Linux FUTEX_WAIT_BITSET treats the timeout as an absolute deadline
+        # measured against CLOCK_MONOTONIC.
+        try:
+          tm = getTimeSpec(CLOCK_MONOTONIC) + timeout.toTimeSpec
+        except OSError as e:
+          raise FutexError.newException $e.name & ":" & e.msg
       result = sysFutex(addr monitor, WaitBitsPrivate, cast[uint32](compare),
                         timeout = addr tm, val3 = mask)
 
@@ -110,18 +159,35 @@ proc wakeMask*[T](monitor: var Atomic[T]; mask: uint32; count = high(int32)): ci
 proc checkWait*(err: cint): cint {.discardable.} =
   if -1 == err:
     result = errno
-    case errno
-    of EINTR, EAGAIN, ETIMEDOUT:
-      discard
+    when defined(macosx) or defined(darwin):
+      # macOS exposes EINTR/EAGAIN/ETIMEDOUT as `let`-bound importc values,
+      # which cannot appear in `case` branches; an `if` ladder is used here.
+      if errno == EINTR or errno == EAGAIN or errno == ETIMEDOUT:
+        discard
+      else:
+        raise FutexError.newException $strerror(errno)
     else:
-      raise FutexError.newException $strerror(errno)
+      case errno
+      of EINTR, EAGAIN, ETIMEDOUT:
+        discard
+      else:
+        raise FutexError.newException $strerror(errno)
   else:
     result = err
 
 proc checkWake*(err: cint): cint {.discardable.} =
   if -1 == err:
     result = errno
-    raise FutexError.newException $strerror(errno)
+    when defined(macosx) or defined(darwin):
+      # Darwin's __ulock_wake reports ENOENT when no threads are queued on
+      # the address; Linux futex(WAKE) simply returns 0 in that case, so
+      # ENOENT is normalized to a successful no-op wake.
+      if errno == ENOENT:
+        result = 0
+      else:
+        raise FutexError.newException $strerror(errno)
+    else:
+      raise FutexError.newException $strerror(errno)
   else:
     result = err
 
